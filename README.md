@@ -227,6 +227,7 @@ Phase 5 adds persisted human review without overwriting automated analysis:
 - `GET /api/message-analysis/reports/{text|email}/{id}?format=json|csv|pdf` exports the stored analysis result, evidence, model/LLM metadata, timestamps and limitations. Exports do not recalculate risk and never include credentials.
 - Administrator endpoints under `/api/admin/message-reviews` support listing, opening, viewing the full report, assignment, status transitions, audit history and feedback. Feedback is stored as `PENDING_VALIDATION` and is not automatically added to training data.
 - The Vite dashboard includes an administrator review panel with review status controls and JSON/PDF report links. It remains unavailable to non-administrators.
+- The dashboard also includes a user-facing Message Analysis Reports panel that selects persisted history records and offers JSON, CSV and PDF downloads.
 - PDF exports use ReportLab (`reportlab==4.2.5`). The existing SQL migration runner applies migration 019 at startup; no existing records are recreated or deleted.
 
 Phase 5 verification: backend suite `130 passed, 1 skipped`; Phase 5 report/review tests `2 passed`; frontend typecheck and production build pass; frontend component suite passes after excluding Playwright files from the Vitest script. Browser E2E remains a separate `npm run test:e2e` command and requires the running app/browser fixture.

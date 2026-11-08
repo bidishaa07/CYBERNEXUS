@@ -338,6 +338,7 @@ This checklist records repository implementation and observed runtime state. A c
 - [x] Added administrator review listing and detail APIs with status workflow: `PENDING_REVIEW`, `UNDER_REVIEW`, `ESCALATED`, `CONFIRMED_MALICIOUS`, `CONFIRMED_BENIGN`, `INCONCLUSIVE`, `CLOSED`.
 - [x] Added reviewer assignment, reason/note capture, status-transition audit history and pending-validation labeled feedback.
 - [x] Added the Vite administrator review panel with status controls and report download links; non-admin access is represented as an authorization state.
+- [x] Added a separate Message Analysis Reports panel with persisted-history selection and JSON/CSV/PDF download actions.
 - [x] Review and report child records are deleted consistently when an authorized analysis deletion is performed.
 - [x] Phase 5 tests: report JSON/CSV/PDF, invalid format, ownership boundary, review workflow, audit history and feedback persistence: `2 passed`.
 - [x] Regression verification: backend `130 passed, 1 skipped`; frontend typecheck/build passed; Vitest component suite passes with Playwright excluded from the Vitest command.
