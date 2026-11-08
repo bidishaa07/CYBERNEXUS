@@ -3,7 +3,7 @@ from datetime import datetime, timezone
 from fastapi import APIRouter, Depends, HTTPException, Header, UploadFile, File, BackgroundTasks
 from sqlalchemy.orm import Session
 from backend.app.db.session import get_db, SessionLocal
-from backend.app.models.models import Scan, CommunityReport, DomainIntelligence, ProviderVerdict, ThreatIndicator, RedirectHop, BrandRegistry, BrandVerificationEvidence, BrandVerificationChallenge, BrandVerificationAudit, BrandLogoAsset, BrandImageReference, WebsiteImageCandidate, ImageComparison, CertificateRecord, CertificateChainLink, CertificateValidationResult, CertificateRevocationResult, CertificateRevocationJob, CertificateTransparencyEntry, CertificateTransparencyAnomaly, CertificateRiskAssessment
+from backend.app.models.models import Scan, CommunityReport, DomainIntelligence, ProviderVerdict, ThreatIndicator, RedirectHop, BrandRegistry, BrandVerificationEvidence, BrandVerificationChallenge, BrandVerificationAudit, BrandLogoAsset, BrandImageReference, WebsiteImageCandidate, ImageComparison, CertificateRecord, CertificateChainLink, CertificateValidationResult, CertificateRevocationResult, CertificateRevocationJob, CertificateTransparencyEntry, CertificateTransparencyAnomaly, CertificateRiskAssessment, EmailAnalysis, EmailHeader, EmailAuthenticationResult, EmailHeaderAnomaly
 from backend.app.schemas.schemas import ScanRequest, ReportRequest
 from backend.app.services.scanner import scan
 from backend.app.services.scanner import _destination_providers
@@ -16,6 +16,7 @@ from backend.app.engines.logo_similarity import fingerprint, compare, MAX_IMAGE_
 from backend.app.engines.logo_similarity import compare_fingerprints
 from backend.app.engines.brand_verification import create_challenge, verify as verify_brand_challenge
 from backend.app.engines.message import analyze_message
+from backend.app.engines.email_analysis import analyze_email, MAX_EMAIL_BYTES
 from backend.app.engines.correlation import correlate
 from backend.app.engines.commitments import commitment
 from backend.app.engines.ml import status as ml_status
@@ -406,6 +407,34 @@ def message_analysis(payload: dict):
     text = payload.get("text", "")
     if not isinstance(text, str) or not 1 <= len(text) <= 20000: raise HTTPException(400, "text must contain 1-20000 characters")
     return analyze_message(text)
+
+@router.post("/message-analysis/email")
+async def email_message_analysis(file: UploadFile = File(...), db: Session = Depends(get_db)):
+    filename = file.filename or "uploaded.eml"
+    if not filename.lower().endswith(".eml"):
+        raise HTTPException(400, "Only .eml files are supported")
+    raw = await file.read(MAX_EMAIL_BYTES + 1)
+    if len(raw) > MAX_EMAIL_BYTES:
+        raise HTTPException(413, "Email file exceeds the 10 MB limit")
+    try:
+        result = analyze_email(raw, filename, file.content_type or "")
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
+    sender = result.get("sender", {})
+    row = EmailAnalysis(filename=filename, content_type=file.content_type or "", size_bytes=len(raw), message_id=sender.get("message_id"), sender=sender.get("from"), subject=sender.get("subject"), analysis_status=result.get("status", "COMPLETED"), result_json=json.dumps(result))
+    db.add(row); db.flush()
+    for item in result.get("headers", []): db.add(EmailHeader(analysis_id=row.id, header_name=item["name"], header_value=item["value"], normalized_value=item.get("normalized"), position=item.get("position", 0)))
+    for item in result.get("authentication", []): db.add(EmailAuthenticationResult(analysis_id=row.id, mechanism=item["mechanism"], status=item["status"], domain=item.get("domain"), selector=item.get("selector"), source=item.get("source"), evidence_json=json.dumps(item.get("evidence", {})), checked_at=datetime.now(timezone.utc)))
+    for item in result.get("anomalies", []): db.add(EmailHeaderAnomaly(analysis_id=row.id, anomaly_type=item["type"], severity=item["severity"], evidence=item["evidence"], created_at=datetime.now(timezone.utc)))
+    db.commit(); result["analysis_id"] = row.id
+    return result
+
+@router.get("/message-analysis/email/{analysis_id}")
+def email_message_analysis_result(analysis_id: int, db: Session = Depends(get_db)):
+    row = db.get(EmailAnalysis, analysis_id)
+    if not row: raise HTTPException(404, "Email analysis not found")
+    result = json.loads(row.result_json); result["analysis_id"] = row.id; result["created_at"] = row.created_at
+    return result
 
 @router.get("/ml/status")
 def model_status():

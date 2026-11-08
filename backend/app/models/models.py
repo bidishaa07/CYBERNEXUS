@@ -111,3 +111,19 @@ class CertificateTransparencyAnomaly(Base):
 class CertificateRiskAssessment(Base):
     __tablename__ = "certificate_risk_assessments"
     id=Column(Integer,primary_key=True); scan_id=Column(Integer,ForeignKey("scans.id"),index=True,nullable=False); score=Column(Integer,nullable=False); level=Column(String(30),nullable=False); confidence=Column(String(30)); validation_status=Column(String(30)); tls_grade=Column(String(10)); revocation_status=Column(String(30)); ca_trust_status=Column(String(40)); ct_anomaly_score=Column(Integer,default=0); findings_json=Column(Text,default="[]"); evidence_json=Column(Text,default="{}"); checked_at=Column(DateTime,default=lambda:datetime.now(timezone.utc))
+
+class EmailAnalysis(Base):
+    __tablename__ = "email_analyses"
+    id=Column(Integer,primary_key=True); filename=Column(String(255)); content_type=Column(String(120)); size_bytes=Column(Integer,nullable=False); message_id=Column(String(512)); sender=Column(String(512)); subject=Column(Text); analysis_status=Column(String(30),default="COMPLETED"); result_json=Column(Text,nullable=False); created_at=Column(DateTime,default=lambda:datetime.now(timezone.utc))
+
+class EmailHeader(Base):
+    __tablename__ = "email_headers"
+    id=Column(Integer,primary_key=True); analysis_id=Column(Integer,ForeignKey("email_analyses.id"),index=True,nullable=False); header_name=Column(String(120),nullable=False); header_value=Column(Text,nullable=False); normalized_value=Column(Text); position=Column(Integer,default=0)
+
+class EmailAuthenticationResult(Base):
+    __tablename__ = "email_authentication_results"
+    id=Column(Integer,primary_key=True); analysis_id=Column(Integer,ForeignKey("email_analyses.id"),index=True,nullable=False); mechanism=Column(String(20),nullable=False); status=Column(String(30),nullable=False); domain=Column(String(255)); selector=Column(String(255)); source=Column(String(120)); evidence_json=Column(Text,default="{}"); checked_at=Column(DateTime,default=lambda:datetime.now(timezone.utc))
+
+class EmailHeaderAnomaly(Base):
+    __tablename__ = "email_header_anomalies"
+    id=Column(Integer,primary_key=True); analysis_id=Column(Integer,ForeignKey("email_analyses.id"),index=True,nullable=False); anomaly_type=Column(String(80),nullable=False); severity=Column(String(20),nullable=False); evidence=Column(Text,nullable=False); created_at=Column(DateTime,default=lambda:datetime.now(timezone.utc))
