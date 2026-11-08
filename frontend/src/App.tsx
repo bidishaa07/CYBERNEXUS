@@ -16,6 +16,7 @@ import CampaignInvestigationPanel from "./components/CampaignInvestigationPanel"
 import SecurityFindingsPanel from "./components/SecurityFindingsPanel";
 import SecurityAuthorizationPanel from "./components/SecurityAuthorizationPanel";
 import WalletIntegrationPanel from "./components/WalletIntegrationPanel";
+import EvidenceManagementPanel from "./components/EvidenceManagementPanel";
 
 const nav = [
   ["Overview", BarChart3],
@@ -158,6 +159,7 @@ function Module4Panel() {
         </p>
       </div>
       <WalletIntegrationPanel />
+      <EvidenceManagementPanel />
       <Correlation />
     </div>
   );

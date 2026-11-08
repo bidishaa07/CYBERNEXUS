@@ -7,6 +7,8 @@ services:
       REDIS_URL: redis://redis:6379/0
       CELERY_BROKER_URL: redis://redis:6379/1
       CELERY_RESULT_BACKEND: redis://redis:6379/2
+      EVIDENCE_CLAMAV_HOST: clamav
+      EVIDENCE_IPFS_PIN_URL: http://ipfs:5001/api/v0/add?pin=true
     ports: ["8001:8001"]
     command: uvicorn backend.app.main:app --host 0.0.0.0 --port 8001
     depends_on:
@@ -21,6 +23,8 @@ services:
       REDIS_URL: redis://redis:6379/0
       CELERY_BROKER_URL: redis://redis:6379/1
       CELERY_RESULT_BACKEND: redis://redis:6379/2
+      EVIDENCE_CLAMAV_HOST: clamav
+      EVIDENCE_IPFS_PIN_URL: http://ipfs:5001/api/v0/add?pin=true
     command: celery -A backend.app.workers.tasks.celery_app worker --loglevel=INFO
     depends_on:
       postgres: { condition: service_healthy }
@@ -62,6 +66,19 @@ services:
       interval: 5s
       timeout: 3s
       retries: 10
+  clamav:
+    image: clamav/clamav:1.4
+    expose: ["3310"]
+    volumes: [digitaltrust-clamav:/var/lib/clamav]
+    restart: unless-stopped
+  ipfs:
+    image: ipfs/kubo:v0.32.1
+    expose: ["5001"]
+    command: ["daemon", "--migrate=true", "--enable-gc"]
+    volumes: [digitaltrust-ipfs:/data/ipfs]
+    restart: unless-stopped
 volumes:
   digitaltrust-postgres:
   digitaltrust-redis:
+  digitaltrust-clamav:
+  digitaltrust-ipfs:

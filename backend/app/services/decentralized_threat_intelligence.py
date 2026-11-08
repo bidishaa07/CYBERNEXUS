@@ -127,7 +127,7 @@ def verify_local_commitment(db, report, revision_id, actor):
     return {"report_id": report.id, "revision_id": revision.id, "stored_commitment": stored.commitment, "computed_commitment": actual, "status": status, "source": "LOCAL_CANONICAL_RECOMPUTATION"}
 
 def provenance(db, report_id):
-    return [{"id": x.id, "revision_id": x.revision_id, "actor_user_id": x.actor_user_id, "event_type": x.event_type, "details": json.loads(x.details_json or "{}"), "created_at": x.created_at} for x in db.query(ProvenanceEvent).filter_by(report_id=report_id).order_by(ProvenanceEvent.created_at).all()]
+    return [{"id": x.id, "revision_id": x.revision_id, "actor_user_id": x.actor_user_id, "event_type": x.event_type, "source_type": x.source_type, "source_id": x.source_id, "ledger_event_id": x.ledger_event_id, "details": json.loads(x.details_json or "{}"), "created_at": x.created_at} for x in db.query(ProvenanceEvent).filter_by(report_id=report_id).order_by(ProvenanceEvent.created_at).all()]
 
 def validation_history(db, report_id):
     from backend.app.models.models import ValidationRecord

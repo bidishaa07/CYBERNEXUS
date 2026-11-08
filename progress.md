@@ -440,3 +440,20 @@ This checklist records repository implementation and observed runtime state. A c
 - [x] Verification: wallet tests `3 passed`; targeted blockchain regression tests `7 passed`; frontend typecheck and production build passed.
 - [ ] Live browser-wallet interaction requires an installed EIP-1193 wallet and a connected Sepolia account.
 - [ ] ERC-1271 smart-contract-wallet verification is not enabled; the current implementation verifies EIP-191/EIP-712 EOA signatures.
+
+### Phase 6.5 - off-chain evidence storage and provenance
+
+- [x] Extended the existing evidence object/reference architecture with report/revision ownership, access classification, encryption status, retention metadata and active/missing state.
+- [x] Added private filesystem evidence storage with generated safe paths, configurable `EVIDENCE_STORAGE_ROOT`, `EVIDENCE_MAX_BYTES`, content-type/signature checks and JSON validation.
+- [x] Added SHA-256 evidence integrity verification on metadata retrieval, download and explicit verification endpoints.
+- [x] Added immutable per-revision evidence manifests with deterministic canonical JSON, domain-separated SHA-256 hashes and version history.
+- [x] Added evidence upload, authorized metadata retrieval, verified content download, evidence verification, manifest history and manifest verification APIs.
+- [x] Linked evidence-added and evidence-verified provenance entries to append-only ledger event IDs without publishing private paths, filenames, tokens or raw evidence on-chain.
+- [x] Added migration `034_offchain_evidence_manifests.sql` and deterministic tests for upload, retrieval, access denial, tampering, manifest verification, invalid JSON and size limits.
+- [x] Added Fernet encryption before disk persistence; production requires `EVIDENCE_ENCRYPTION_KEY`, while development keeps a generated key in the ignored evidence root.
+- [x] Added HTTP malware-scanner and ClamAV INSTREAM adapters with explicit `CLEAN`, `MALICIOUS`, `UNKNOWN` and `UNAVAILABLE` handling; no missing scanner is treated as clean.
+- [x] Added internal Kubo IPFS pinning support for encrypted evidence and Docker Compose services for ClamAV and Kubo; private APIs are not publicly exposed.
+- [x] Added startup and administrator-triggered retention cleanup that deletes expired bytes but preserves tombstone metadata, hashes, ledger events and provenance.
+- [x] Added the frontend off-chain evidence panel with metadata loading, hash verification, manifest history and encrypted IPFS pin action.
+- [x] Verification: Phase 6.5 tests `4 passed`; full backend suite `184 passed, 1 skipped`; frontend typecheck/build pass; Compose configuration validates.
+- [ ] Live ClamAV/IPFS operation requires starting the Docker Compose deployment; no external malware or pinning credentials are committed.

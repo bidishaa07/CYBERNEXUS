@@ -121,6 +121,17 @@ class Settings(BaseSettings):
     blockchain_confirmations: int = 2
     blockchain_max_retries: int = 2
     blockchain_abi_path: str = "backend/app/artifacts/ThreatIntelligence.json"
+    evidence_storage_root: str = "data/evidence"
+    evidence_max_bytes: int = 10000000
+    evidence_default_retention_days: int = 365
+    evidence_encryption_key: str = ""
+    evidence_malware_scan_url: str = ""
+    evidence_malware_scan_timeout_seconds: float = 10
+    evidence_clamav_host: str = ""
+    evidence_clamav_port: int = 3310
+    evidence_ipfs_pin_url: str = ""
+    evidence_ipfs_auth_token: str = ""
+    evidence_ipfs_timeout_seconds: float = 15
     hsts_preload_api_url: str = "https://hstspreload.org/api/v2/status?domain={domain}"
     hsts_preload_timeout_seconds: float = 5
     disclosure_vulnerability_lookup_enabled: bool = True

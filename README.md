@@ -311,6 +311,23 @@ Phase 6.4 adds wallet ownership verification and report-revision signatures with
 
 Phase 6.4 verification: wallet challenge/replay/wrong-signer/EIP-712 binding tests `3 passed`; targeted blockchain regression tests `7 passed`; frontend TypeScript check and production build passed. Live browser-wallet interaction was not claimed because no browser wallet was connected during automated verification. ERC-1271 contract-wallet verification is not enabled yet; current verification covers EIP-191/EIP-712 externally owned account signatures.
 
+## Phase 6.5 off-chain evidence and provenance
+
+Phase 6.5 adds a private evidence layer that keeps confidential files off-chain:
+
+- Migration `034_offchain_evidence_manifests.sql` extends the existing evidence objects/references and provenance records and adds immutable per-revision evidence manifests.
+- Evidence uploads are stored below `EVIDENCE_STORAGE_ROOT` using generated safe paths, size limits, declared-content validation for JSON/PDF/images/ZIP, SHA-256 hashes and owner/admin access controls. Original filenames and storage paths are not exposed through public metadata or blockchain records.
+- `POST /api/threat-intelligence/reports/{report_id}/revisions/{revision_id}/evidence` stores evidence and creates a versioned manifest. `GET .../evidence` returns authorized metadata; content is available only after hash verification.
+- `POST /api/threat-intelligence/evidence/{evidence_id}/verify` and `POST .../evidence/manifests/verify` return explicit `VERIFIED`, `HASH_MISMATCH`, `MISSING`, `ACCESS_DENIED` or `UNKNOWN` outcomes.
+- Evidence-added and evidence-verified operations link the source evidence ID to the append-only ledger event and provenance history. Manifest hashes contain only stable evidence IDs, hashes, content types, sizes and reference descriptions.
+- New local evidence is encrypted with Fernet before disk persistence (`FERNET_AES128_HMAC`). Production refuses uploads unless `EVIDENCE_ENCRYPTION_KEY` is configured; development generates a private local key file under the ignored evidence root.
+- Malware scanning supports a configured HTTP scanner or ClamAV INSTREAM. Docker Compose now provides an internal ClamAV service; scanner failures remain `UNKNOWN`/`UNAVAILABLE` and are never treated as clean.
+- Encrypted evidence can be pinned to an internal Kubo IPFS service or configured pinning endpoint. Only encrypted bytes are pinned and only the returned CID is persisted; the Kubo API is not publicly exposed by Compose.
+- Retention cleanup runs at application startup and through the administrator endpoint, removing expired storage bytes while preserving the evidence hash, metadata, ledger event and provenance history as `DELETED`.
+- The Threat correlation dashboard now includes an off-chain evidence panel for loading evidence, verifying hashes, reviewing manifest history and requesting encrypted IPFS pinning.
+
+Phase 6.5 verification: off-chain evidence/encryption/integrity/access/manifest/retention tests `4 passed`; full backend suite `184 passed, 1 skipped`; frontend typecheck and production build pass; `docker compose config` passes. Live ClamAV/IPFS service execution still requires starting the Compose deployment.
+
 ## Structure
 
 `frontend/` Vite/React dashboard · `backend/` FastAPI API, engines, persistence, and migrations · `engines/` model/detection modules · `dataset/` local training data · `tests/` automated backend tests · `docs/` architecture notes · `infrastructure/` deployment notes.

@@ -1,10 +1,11 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from backend.app.db.session import Base, engine, run_migrations
+from backend.app.db.session import Base, engine, run_migrations, SessionLocal
 from backend.app.models.models import Scan, CommunityReport
 from backend.app.api.routes import router
 from backend.app.core.config import settings
 from backend.app.services.local_ml_worker import resume_pending
+from backend.app.services.evidence_storage import cleanup_expired
 
 Base.metadata.create_all(bind=engine)
 run_migrations()
@@ -16,3 +17,8 @@ app.include_router(router, prefix="/api")
 def resume_local_ml_jobs():
     if not settings.celery_broker_url:
         resume_pending()
+    db = SessionLocal()
+    try:
+        cleanup_expired(db, "system-retention-worker")
+    finally:
+        db.close()

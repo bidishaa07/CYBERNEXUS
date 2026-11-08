@@ -683,11 +683,22 @@ class EvidenceObject(Base):
     __tablename__ = "threat_evidence_objects"
     id=Column(Integer,primary_key=True)
     owner_user_id=Column(String(160),index=True,nullable=False)
+    report_id=Column(Integer,ForeignKey("threat_intelligence_reports.id"),index=True)
+    revision_id=Column(Integer,ForeignKey("threat_report_revisions.id"),index=True)
     object_hash=Column(String(64),index=True,nullable=False)
     hash_algorithm=Column(String(30),nullable=False,default="SHA-256")
     storage_uri=Column(String(2048))
     content_type=Column(String(160))
     size_bytes=Column(Integer)
+    access_classification=Column(String(40),nullable=False,default="PRIVATE")
+    encryption_status=Column(String(40),nullable=False,default="NOT_ENCRYPTED")
+    retention_expires_at=Column(DateTime)
+    status=Column(String(30),nullable=False,default="ACTIVE",index=True)
+    malware_scan_status=Column(String(30),nullable=False,default="UNKNOWN")
+    malware_scan_provider=Column(String(120))
+    malware_scanned_at=Column(DateTime)
+    ipfs_cid=Column(String(255),index=True)
+    ipfs_status=Column(String(30),nullable=False,default="NOT_REQUESTED")
     metadata_json=Column(Text,default="{}")
     created_at=Column(DateTime,default=lambda:datetime.now(timezone.utc))
     __table_args__=(UniqueConstraint("owner_user_id","object_hash",name="uq_threat_evidence_owner_hash"),)
@@ -709,8 +720,24 @@ class ProvenanceEvent(Base):
     revision_id=Column(Integer,ForeignKey("threat_report_revisions.id"),index=True)
     actor_user_id=Column(String(160),index=True,nullable=False)
     event_type=Column(String(80),nullable=False)
+    source_type=Column(String(80))
+    source_id=Column(String(160))
+    ledger_event_id=Column(Integer,ForeignKey("threat_append_only_ledger_events.id"),index=True)
     details_json=Column(Text,default="{}")
     created_at=Column(DateTime,default=lambda:datetime.now(timezone.utc),index=True)
+
+class EvidenceManifest(Base):
+    __tablename__ = "threat_evidence_manifests"
+    id=Column(Integer,primary_key=True)
+    report_id=Column(Integer,ForeignKey("threat_intelligence_reports.id"),index=True,nullable=False)
+    revision_id=Column(Integer,ForeignKey("threat_report_revisions.id"),index=True,nullable=False)
+    version=Column(Integer,nullable=False)
+    canonical_manifest=Column(Text,nullable=False)
+    manifest_hash=Column(String(64),nullable=False,index=True)
+    hash_algorithm=Column(String(30),nullable=False,default="SHA-256")
+    created_by=Column(String(160),nullable=False)
+    created_at=Column(DateTime,default=lambda:datetime.now(timezone.utc),index=True)
+    __table_args__=(UniqueConstraint("revision_id","version",name="uq_threat_evidence_manifest_version"),)
 
 class ValidationRecord(Base):
     __tablename__ = "threat_validation_records"

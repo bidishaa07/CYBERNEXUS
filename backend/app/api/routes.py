@@ -7,9 +7,10 @@ from datetime import datetime, timezone
 from pathlib import Path
 from fastapi import APIRouter, Depends, HTTPException, Header, UploadFile, File, BackgroundTasks, Query, Response
 from sqlalchemy import asc, case, cast, desc, func, or_, String as SQLString
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 from backend.app.db.session import get_db, SessionLocal
-from backend.app.models.models import Scan, CommunityReport, DomainIntelligence, ProviderVerdict, ThreatIndicator, RedirectHop, BrandRegistry, BrandVerificationEvidence, BrandVerificationChallenge, BrandVerificationAudit, BrandLogoAsset, BrandImageReference, WebsiteImageCandidate, ImageComparison, CertificateRecord, CertificateChainLink, CertificateValidationResult, CertificateRevocationResult, CertificateRevocationJob, CertificateTransparencyEntry, CertificateTransparencyAnomaly, CertificateRiskAssessment, EmailAnalysis, EmailHeader, EmailAuthenticationResult, EmailHeaderAnomaly, EmailRawMessage, EmailSmtpContext, EmailVerificationRun, MessageAnalysisRecord, MessageIndicatorResult, MessageDomainSpoofingFinding, EmailProviderRegistry, ContactRiskAssessment, IntelligenceVerification, BackgroundTaskRun, MessageAnalysisMetadata, MessageContent, MessageAnalysisEvent, AppUser, LegacyIdentityLink, MessageReview, MessageReviewAudit, MessageReviewFeedback, MLDatasetVersion, MLModelVersion, MLDeploymentHistory, MLTrainingRun, SecurityAssessment, SecurityFinding, RemediationRecord, SecurityAuthorization, AssessmentEvent, ThreatIntelligenceReport, ReportRevision, WalletChallenge, WalletIdentity, DigitalSignature
+from backend.app.models.models import Scan, CommunityReport, DomainIntelligence, ProviderVerdict, ThreatIndicator, RedirectHop, BrandRegistry, BrandVerificationEvidence, BrandVerificationChallenge, BrandVerificationAudit, BrandLogoAsset, BrandImageReference, WebsiteImageCandidate, ImageComparison, CertificateRecord, CertificateChainLink, CertificateValidationResult, CertificateRevocationResult, CertificateRevocationJob, CertificateTransparencyEntry, CertificateTransparencyAnomaly, CertificateRiskAssessment, EmailAnalysis, EmailHeader, EmailAuthenticationResult, EmailHeaderAnomaly, EmailRawMessage, EmailSmtpContext, EmailVerificationRun, MessageAnalysisRecord, MessageIndicatorResult, MessageDomainSpoofingFinding, EmailProviderRegistry, ContactRiskAssessment, IntelligenceVerification, BackgroundTaskRun, MessageAnalysisMetadata, MessageContent, MessageAnalysisEvent, AppUser, LegacyIdentityLink, MessageReview, MessageReviewAudit, MessageReviewFeedback, MLDatasetVersion, MLModelVersion, MLDeploymentHistory, MLTrainingRun, SecurityAssessment, SecurityFinding, RemediationRecord, SecurityAuthorization, AssessmentEvent, ThreatIntelligenceReport, ReportRevision, WalletChallenge, WalletIdentity, DigitalSignature, EvidenceObject
 from backend.app.schemas.schemas import ScanRequest, ReportRequest
 from backend.app.services.scanner import scan
 from backend.app.services.scanner import _destination_providers
@@ -55,6 +56,7 @@ from backend.app.services.ledger import ledger_checkpoint, verify_ledger
 from backend.app.services.blockchain_anchor import verify_external_receipt, verify_configuration as blockchain_configuration_status
 from backend.app.services.evm_blockchain import EVMBlockchainAdapter
 from backend.app.services.wallet_signatures import ownership_challenge, verify_ownership, signature_challenge, verify_signature
+from backend.app.services.evidence_storage import upload as upload_evidence, serialize_object as serialize_evidence, verify_object as verify_evidence, read_verified as read_verified_evidence, manifest_details, verify_manifest, pin_to_ipfs, cleanup_expired, can_access as can_access_evidence
 from backend.app.services.ml_registry import validate_dataset, artifact_metadata, _safe_artifact, POINTER, MODEL_ROOT
 from backend.app.workers import tasks as worker_tasks
 from backend.app.services.local_ml_worker import submit as submit_local_retraining
@@ -1315,6 +1317,120 @@ def verify_threat_intelligence_blockchain_receipt(report_id: int, revision_id: i
 @router.get("/threat-intelligence/blockchain/status")
 def threat_intelligence_blockchain_status(principal: Principal = Depends(get_current_principal), _: None = Depends(admin_only)):
     return blockchain_configuration_status()
+
+@router.post("/threat-intelligence/reports/{report_id}/revisions/{revision_id}/evidence")
+async def add_threat_intelligence_evidence(
+    report_id: int,
+    revision_id: int,
+    file: UploadFile = File(...),
+    reference_type: str = Query("SUPPORTING", min_length=1, max_length=80),
+    description: str = Query("", max_length=4000),
+    access_classification: str = Query("PRIVATE"),
+    principal: Principal = Depends(get_current_principal),
+    db: Session = Depends(get_db),
+):
+    try:
+        report = get_owned_threat_report(db, report_id, principal, principal.role == "admin")
+    except LookupError as exc:
+        raise HTTPException(404, str(exc)) from exc
+    revision = db.query(ReportRevision).filter_by(id=revision_id, report_id=report.id).first()
+    if not revision:
+        raise HTTPException(404, "revision not found")
+    data = await file.read(int(settings.evidence_max_bytes) + 1)
+    try:
+        obj, ref, manifest, ledger = upload_evidence(
+            db,
+            report,
+            revision,
+            principal.user_id,
+            data,
+            file.filename,
+            file.content_type,
+            reference_type,
+            description,
+            access_classification,
+        )
+    except (ValueError, IntegrityError) as exc:
+        db.rollback()
+        raise HTTPException(400, str(exc)) from exc
+    return {
+        "evidence": serialize_evidence(db, obj, principal, principal.role == "admin"),
+        "reference": {"id": ref.id, "reference_type": ref.reference_type, "description": ref.description},
+        "manifest": {"id": manifest.id, "version": manifest.version, "manifest_hash": manifest.manifest_hash},
+        "ledger_event_id": ledger.id,
+    }
+
+@router.get("/threat-intelligence/reports/{report_id}/revisions/{revision_id}/evidence")
+def list_threat_intelligence_evidence(report_id: int, revision_id: int, principal: Principal = Depends(get_current_principal), db: Session = Depends(get_db)):
+    try:
+        report = get_owned_threat_report(db, report_id, principal, principal.role == "admin")
+    except LookupError as exc:
+        raise HTTPException(404, str(exc)) from exc
+    revision = db.query(ReportRevision).filter_by(id=revision_id, report_id=report.id).first()
+    if not revision:
+        raise HTTPException(404, "revision not found")
+    rows = db.query(EvidenceObject).filter_by(revision_id=revision.id).order_by(EvidenceObject.id.asc()).all()
+    return {"items": [serialize_evidence(db, row, principal, principal.role == "admin") for row in rows], "manifests": manifest_details(db, report, revision.id, principal.user_id)}
+
+@router.get("/threat-intelligence/evidence/{evidence_id}")
+def get_threat_intelligence_evidence(evidence_id: int, principal: Principal = Depends(get_current_principal), db: Session = Depends(get_db)):
+    row = db.get(EvidenceObject, evidence_id)
+    if not row:
+        raise HTTPException(404, "evidence not found")
+    if not can_access_evidence(row, principal, principal.role == "admin"):
+        raise HTTPException(403, "evidence access denied")
+    return serialize_evidence(db, row, principal, principal.role == "admin")
+
+@router.get("/threat-intelligence/evidence/{evidence_id}/content")
+def download_threat_intelligence_evidence(evidence_id: int, principal: Principal = Depends(get_current_principal), db: Session = Depends(get_db)):
+    row = db.get(EvidenceObject, evidence_id)
+    if not row:
+        raise HTTPException(404, "evidence not found")
+    if not can_access_evidence(row, principal, principal.role == "admin"):
+        raise HTTPException(403, "evidence access denied")
+    integrity, content = read_verified_evidence(db, row, principal.user_id)
+    if integrity["status"] != "VERIFIED":
+        code = 404 if integrity["status"] == "MISSING" else 409
+        raise HTTPException(code, integrity["status"])
+    return Response(content=content, media_type=row.content_type or "application/octet-stream", headers={"Content-Disposition": "attachment; filename=evidence"})
+
+@router.post("/threat-intelligence/evidence/{evidence_id}/verify")
+def verify_threat_intelligence_evidence(evidence_id: int, principal: Principal = Depends(get_current_principal), db: Session = Depends(get_db)):
+    row = db.get(EvidenceObject, evidence_id)
+    if not row:
+        raise HTTPException(404, "evidence not found")
+    if not can_access_evidence(row, principal, principal.role == "admin"):
+        return {"status": "ACCESS_DENIED", "evidence_id": evidence_id}
+    return verify_evidence(db, row, principal.user_id)
+
+@router.post("/threat-intelligence/evidence/{evidence_id}/ipfs")
+def pin_threat_intelligence_evidence(evidence_id: int, principal: Principal = Depends(get_current_principal), db: Session = Depends(get_db)):
+    row = db.get(EvidenceObject, evidence_id)
+    if not row:
+        raise HTTPException(404, "evidence not found")
+    if not can_access_evidence(row, principal, principal.role == "admin"):
+        raise HTTPException(403, "evidence access denied")
+    return pin_to_ipfs(db, row, principal.user_id)
+
+@router.post("/admin/threat-intelligence/evidence/retention/cleanup")
+def cleanup_threat_intelligence_evidence(principal: Principal = Depends(get_current_principal), _: None = Depends(admin_only), db: Session = Depends(get_db)):
+    return cleanup_expired(db, principal.user_id)
+
+@router.get("/threat-intelligence/reports/{report_id}/revisions/{revision_id}/evidence/manifests")
+def list_threat_intelligence_manifests(report_id: int, revision_id: int, principal: Principal = Depends(get_current_principal), db: Session = Depends(get_db)):
+    try:
+        report = get_owned_threat_report(db, report_id, principal, principal.role == "admin")
+        return {"items": manifest_details(db, report, revision_id, principal.user_id)}
+    except LookupError as exc:
+        raise HTTPException(404, str(exc)) from exc
+
+@router.post("/threat-intelligence/reports/{report_id}/revisions/{revision_id}/evidence/manifests/verify")
+def verify_threat_intelligence_manifest(report_id: int, revision_id: int, version: int | None = None, principal: Principal = Depends(get_current_principal), db: Session = Depends(get_db)):
+    try:
+        report = get_owned_threat_report(db, report_id, principal, principal.role == "admin")
+        return verify_manifest(db, report, revision_id, version)
+    except LookupError as exc:
+        raise HTTPException(404, str(exc)) from exc
 
 @router.post("/threat-intelligence/wallet/challenges")
 def create_wallet_ownership_challenge(payload: dict, principal: Principal = Depends(get_current_principal), db: Session = Depends(get_db)):
