@@ -19,11 +19,11 @@ import SecurityAuthorizationPanel from "./components/SecurityAuthorizationPanel"
 const nav = [
   ["Overview", BarChart3],
   ["Threat scanner", Radar],
-  ["Module 5 · Website security", ShieldCheck],
+  ["Website security", ShieldCheck],
   ["Message analysis", MessageSquare],
   ["Scan history", History],
   ["Community intel", Users],
-  ["Module 4 · Threat correlation", Network],
+  ["Threat correlation", Network],
 ] as const;
 export default function App() {
   const [tab, setTab] = useState("Overview");
@@ -136,11 +136,11 @@ export default function App() {
               {result && <ScanResult data={result} />}
             </>
           )}
-          {tab === "Module 5 · Website security" && <Module5Panel scan={result} />}
+          {tab === "Website security" && <Module5Panel scan={result} />}
           {tab === "Message analysis" && <Message />}
           {tab === "Scan history" && <HistoryPanel items={history} />}{" "}
           {tab === "Community intel" && <Community />}
-          {tab === "Module 4 · Threat correlation" && <Module4Panel />}
+          {tab === "Threat correlation" && <Module4Panel />}
         </section>
       </div>
     </main>
@@ -150,7 +150,6 @@ function Module4Panel() {
   return (
     <div className="space-y-6">
       <div className="glass rounded-3xl border border-cyan/20 p-6">
-        <div className="text-xs uppercase tracking-[.2em] text-cyan">Module 4</div>
         <h2 className="mt-1 text-2xl font-semibold">Intelligent threat correlation</h2>
         <p className="mt-2 max-w-3xl text-sm text-slate-400">
           Explore evidence-backed relationships across messages, indicators, infrastructure,
@@ -165,7 +164,6 @@ function Module5Panel({ scan }: { scan?: any }) {
   return (
     <div className="space-y-6">
       <div className="glass rounded-3xl border border-cyan/20 p-6">
-        <div className="text-xs uppercase tracking-[.2em] text-cyan">Module 5</div>
         <h2 className="mt-1 text-2xl font-semibold">Website security assessment</h2>
         <p className="mt-2 max-w-3xl text-sm text-slate-400">
           Review normalized security findings, remediation history, assessment reports and
