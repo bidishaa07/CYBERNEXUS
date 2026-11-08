@@ -329,3 +329,17 @@ This checklist records repository implementation and observed runtime state. A c
 - [x] Authentication regression tests: missing auth, verified subject synchronization and User A/User B isolation pass.
 - [x] Full backend suite: `128 passed, 1 skipped`; frontend typecheck and production build pass.
 - [ ] A real Keycloak/Auth0/Clerk issuer, JWKS URL, audience and client configuration must still be supplied in the deployment environment; tests use controlled identity fixtures and do not claim live provider connectivity.
+
+### Phase 5 - message analysis reports and administrator review
+
+- [x] Added migration `019_message_reviews.sql` for review cases, audit events and human feedback.
+- [x] New text and `.eml` analyses automatically create a `PENDING_REVIEW` case while preserving the automated classification separately.
+- [x] Added persisted-result exports for JSON, CSV and PDF; exports include evidence, indicators, authentication, LLM status, model version, timestamps and limitations without recalculating risk or exposing secrets.
+- [x] Added administrator review listing and detail APIs with status workflow: `PENDING_REVIEW`, `UNDER_REVIEW`, `ESCALATED`, `CONFIRMED_MALICIOUS`, `CONFIRMED_BENIGN`, `INCONCLUSIVE`, `CLOSED`.
+- [x] Added reviewer assignment, reason/note capture, status-transition audit history and pending-validation labeled feedback.
+- [x] Added the Vite administrator review panel with status controls and report download links; non-admin access is represented as an authorization state.
+- [x] Review and report child records are deleted consistently when an authorized analysis deletion is performed.
+- [x] Phase 5 tests: report JSON/CSV/PDF, invalid format, ownership boundary, review workflow, audit history and feedback persistence: `2 passed`.
+- [x] Regression verification: backend `130 passed, 1 skipped`; frontend typecheck/build passed; Vitest component suite passes with Playwright excluded from the Vitest command.
+- [ ] A live OIDC admin identity and running browser E2E environment still need to be configured for live administrator/browser verification.
+- [ ] Phase 6 model version management and automated retraining have not started.

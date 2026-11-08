@@ -187,3 +187,15 @@ class AppUser(Base):
 class LegacyIdentityLink(Base):
     __tablename__ = "legacy_identity_links"
     id=Column(Integer,primary_key=True); legacy_user_id=Column(String(160),unique=True,index=True,nullable=False); external_subject=Column(String(512),index=True,nullable=False); linked_by=Column(String(512),nullable=False); created_at=Column(DateTime,default=lambda:datetime.now(timezone.utc))
+
+class MessageReview(Base):
+    __tablename__ = "message_reviews"
+    id=Column(Integer,primary_key=True); message_analysis_id=Column(Integer,ForeignKey("message_analysis_records.id"),unique=True,index=True); email_analysis_id=Column(Integer,ForeignKey("email_analyses.id"),unique=True,index=True); status=Column(String(30),nullable=False,default="PENDING_REVIEW"); assigned_reviewer=Column(String(512)); decision_reason=Column(Text); created_by=Column(String(512),nullable=False); updated_by=Column(String(512),nullable=False); created_at=Column(DateTime,default=lambda:datetime.now(timezone.utc)); updated_at=Column(DateTime,default=lambda:datetime.now(timezone.utc))
+
+class MessageReviewAudit(Base):
+    __tablename__ = "message_review_audits"
+    id=Column(Integer,primary_key=True); review_id=Column(Integer,ForeignKey("message_reviews.id"),index=True,nullable=False); reviewer_id=Column(String(512),nullable=False); action=Column(String(60),nullable=False); previous_status=Column(String(30)); new_status=Column(String(30)); reason=Column(Text); note=Column(Text); created_at=Column(DateTime,default=lambda:datetime.now(timezone.utc))
+
+class MessageReviewFeedback(Base):
+    __tablename__ = "message_review_feedback"
+    id=Column(Integer,primary_key=True); review_id=Column(Integer,ForeignKey("message_reviews.id"),index=True,nullable=False); reviewer_id=Column(String(512),nullable=False); label=Column(String(40),nullable=False); certainty=Column(String(30)); evidence=Column(Text); approval_status=Column(String(30),nullable=False,default="PENDING_VALIDATION"); created_at=Column(DateTime,default=lambda:datetime.now(timezone.utc))

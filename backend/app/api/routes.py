@@ -7,7 +7,7 @@ from fastapi import APIRouter, Depends, HTTPException, Header, UploadFile, File,
 from sqlalchemy import or_
 from sqlalchemy.orm import Session
 from backend.app.db.session import get_db, SessionLocal
-from backend.app.models.models import Scan, CommunityReport, DomainIntelligence, ProviderVerdict, ThreatIndicator, RedirectHop, BrandRegistry, BrandVerificationEvidence, BrandVerificationChallenge, BrandVerificationAudit, BrandLogoAsset, BrandImageReference, WebsiteImageCandidate, ImageComparison, CertificateRecord, CertificateChainLink, CertificateValidationResult, CertificateRevocationResult, CertificateRevocationJob, CertificateTransparencyEntry, CertificateTransparencyAnomaly, CertificateRiskAssessment, EmailAnalysis, EmailHeader, EmailAuthenticationResult, EmailHeaderAnomaly, EmailRawMessage, EmailSmtpContext, EmailVerificationRun, MessageAnalysisRecord, MessageIndicatorResult, MessageDomainSpoofingFinding, EmailProviderRegistry, ContactRiskAssessment, IntelligenceVerification, BackgroundTaskRun, MessageAnalysisMetadata, MessageContent, MessageAnalysisEvent, AppUser, LegacyIdentityLink
+from backend.app.models.models import Scan, CommunityReport, DomainIntelligence, ProviderVerdict, ThreatIndicator, RedirectHop, BrandRegistry, BrandVerificationEvidence, BrandVerificationChallenge, BrandVerificationAudit, BrandLogoAsset, BrandImageReference, WebsiteImageCandidate, ImageComparison, CertificateRecord, CertificateChainLink, CertificateValidationResult, CertificateRevocationResult, CertificateRevocationJob, CertificateTransparencyEntry, CertificateTransparencyAnomaly, CertificateRiskAssessment, EmailAnalysis, EmailHeader, EmailAuthenticationResult, EmailHeaderAnomaly, EmailRawMessage, EmailSmtpContext, EmailVerificationRun, MessageAnalysisRecord, MessageIndicatorResult, MessageDomainSpoofingFinding, EmailProviderRegistry, ContactRiskAssessment, IntelligenceVerification, BackgroundTaskRun, MessageAnalysisMetadata, MessageContent, MessageAnalysisEvent, AppUser, LegacyIdentityLink, MessageReview, MessageReviewAudit, MessageReviewFeedback
 from backend.app.schemas.schemas import ScanRequest, ReportRequest
 from backend.app.services.scanner import scan
 from backend.app.services.scanner import _destination_providers
@@ -38,6 +38,7 @@ from backend.app.engines.external_intelligence import status as external_intelli
 from backend.app.engines.certificate_chain import _trusted_roots
 from backend.app.engines.certificate_revocation import analyze_chain
 from backend.app.engines.ca_reputation import configuration_status as ca_reputation_configuration
+from backend.app.services.message_reports import bundle as build_message_report, csv_bytes as report_csv_bytes, pdf_bytes as report_pdf_bytes
 from cryptography import x509
 
 router = APIRouter()
@@ -505,6 +506,7 @@ def message_analysis(payload: dict, principal: Principal = Depends(get_current_p
     ml = result.get("ml") or {}
     db.add(MessageContent(message_analysis_id=record.id, content_bytes=text.encode(), sha256=digest, content_type="text/plain"))
     db.add(MessageAnalysisMetadata(message_analysis_id=record.id, user_id=owner, input_type="TEXT", sender=None, subject=None, risk_score=result.get("score"), classification=result.get("classification"), ml_prediction=ml.get("prediction"), ml_confidence=ml.get("malicious_probability"), llm_status=(result.get("llm") or {}).get("status") or ("CONNECTED" if (result.get("llm") or {}).get("available") else "UNAVAILABLE"), model_version=ml.get("model") or "current", analysis_status="COMPLETED", duplicate_of_id=previous.message_analysis_id if previous else None))
+    db.add(MessageReview(message_analysis_id=record.id, status="PENDING_REVIEW", created_by=owner, updated_by=owner))
     db.add(MessageAnalysisEvent(message_analysis_id=record.id, user_id=owner, event_type="created", details_json=json.dumps({"input_type":"TEXT", "duplicate": bool(previous)})))
     intel=result.get("indicator_intelligence", {})
     for indicator_type in ("urls", "emails", "phones"):
@@ -543,6 +545,7 @@ async def email_message_analysis(file: UploadFile = File(...), principal: Princi
     db.add(row); db.flush(); db.add(EmailRawMessage(analysis_id=row.id, raw_bytes=raw, sha256=hashlib.sha256(raw).hexdigest()))
     ml = result.get("ml") or {}
     db.add(MessageAnalysisMetadata(email_analysis_id=row.id, user_id=owner, input_type="EML", sender=sender.get("from"), subject=sender.get("subject"), risk_score=result.get("score"), classification=result.get("classification"), ml_prediction=ml.get("prediction"), ml_confidence=ml.get("malicious_probability"), llm_status=(result.get("llm") or {}).get("status") or "UNAVAILABLE", model_version=ml.get("model") or "current", analysis_status=result.get("status", "COMPLETED"), duplicate_of_id=previous.email_analysis_id if previous else None))
+    db.add(MessageReview(email_analysis_id=row.id, status="PENDING_REVIEW", created_by=owner, updated_by=owner))
     db.add(MessageAnalysisEvent(email_analysis_id=row.id, user_id=owner, event_type="created", details_json=json.dumps({"input_type":"EML", "duplicate": bool(previous)})))
     for item in result.get("headers", []): db.add(EmailHeader(analysis_id=row.id, header_name=item["name"], header_value=item["value"], normalized_value=item.get("normalized"), position=item.get("position", 0)))
     for item in result.get("authentication", []): db.add(EmailAuthenticationResult(analysis_id=row.id, mechanism=item["mechanism"], status=item["status"], domain=item.get("domain"), selector=item.get("selector"), source=item.get("source"), evidence_json=json.dumps(item.get("evidence", {})), checked_at=datetime.now(timezone.utc)))
@@ -604,6 +607,9 @@ def email_message_analysis_result(analysis_id: int, principal: Principal = Depen
 def delete_email_analysis(analysis_id: int, principal: Principal = Depends(get_current_principal), x_admin_token: str | None = Header(default=None), db: Session = Depends(get_db)):
     row=db.get(EmailAnalysis, analysis_id); meta=db.query(MessageAnalysisMetadata).filter(MessageAnalysisMetadata.email_analysis_id == analysis_id).first()
     if not row or not meta or not _can_view(meta, principal.user_id, principal.role == "admin" or _admin(x_admin_token), principal.legacy_ids): raise HTTPException(404, "Email analysis not found")
+    review = db.query(MessageReview).filter(MessageReview.email_analysis_id == analysis_id).first()
+    if review:
+        db.query(MessageReviewFeedback).filter(MessageReviewFeedback.review_id == review.id).delete(synchronize_session=False); db.query(MessageReviewAudit).filter(MessageReviewAudit.review_id == review.id).delete(synchronize_session=False); db.delete(review)
     db.query(MessageAnalysisEvent).filter(MessageAnalysisEvent.email_analysis_id == analysis_id).delete(synchronize_session=False); db.query(MessageIndicatorResult).filter(MessageIndicatorResult.email_analysis_id == analysis_id).delete(synchronize_session=False); db.query(MessageDomainSpoofingFinding).filter(MessageDomainSpoofingFinding.email_analysis_id == analysis_id).delete(synchronize_session=False); db.query(ContactRiskAssessment).filter(ContactRiskAssessment.email_analysis_id == analysis_id).delete(synchronize_session=False); db.query(EmailHeader).filter(EmailHeader.analysis_id == analysis_id).delete(synchronize_session=False); db.query(EmailAuthenticationResult).filter(EmailAuthenticationResult.analysis_id == analysis_id).delete(synchronize_session=False); db.query(EmailHeaderAnomaly).filter(EmailHeaderAnomaly.analysis_id == analysis_id).delete(synchronize_session=False); db.query(EmailRawMessage).filter(EmailRawMessage.analysis_id == analysis_id).delete(synchronize_session=False); db.query(EmailVerificationRun).filter(EmailVerificationRun.analysis_id == analysis_id).delete(synchronize_session=False); db.query(EmailSmtpContext).filter(EmailSmtpContext.analysis_id == analysis_id).delete(synchronize_session=False); db.delete(meta); db.delete(row); db.commit(); return {"deleted": True, "analysis_id": analysis_id}
 
 @router.get("/message-analysis/history")
@@ -638,7 +644,98 @@ def reanalyze_message(analysis_id: int, principal: Principal = Depends(get_curre
 def delete_message_analysis(analysis_id: int, principal: Principal = Depends(get_current_principal), x_admin_token: str | None = Header(default=None), db: Session = Depends(get_db)):
     row=db.get(MessageAnalysisRecord, analysis_id); meta=db.query(MessageAnalysisMetadata).filter(MessageAnalysisMetadata.message_analysis_id == analysis_id).first()
     if not row or not meta or not _can_view(meta, principal.user_id, principal.role == "admin" or _admin(x_admin_token), principal.legacy_ids): raise HTTPException(404, "Message analysis not found")
+    review = db.query(MessageReview).filter(MessageReview.message_analysis_id == analysis_id).first()
+    if review:
+        db.query(MessageReviewFeedback).filter(MessageReviewFeedback.review_id == review.id).delete(synchronize_session=False); db.query(MessageReviewAudit).filter(MessageReviewAudit.review_id == review.id).delete(synchronize_session=False); db.delete(review)
     db.query(MessageAnalysisEvent).filter(MessageAnalysisEvent.message_analysis_id == analysis_id).delete(synchronize_session=False); db.query(MessageContent).filter(MessageContent.message_analysis_id == analysis_id).delete(synchronize_session=False); db.query(ContactRiskAssessment).filter(ContactRiskAssessment.message_analysis_id == analysis_id).delete(synchronize_session=False); db.query(MessageIndicatorResult).filter(MessageIndicatorResult.message_analysis_id == analysis_id).delete(synchronize_session=False); db.query(MessageDomainSpoofingFinding).filter(MessageDomainSpoofingFinding.message_analysis_id == analysis_id).delete(synchronize_session=False); db.delete(meta); db.delete(row); db.commit(); return {"deleted": True, "analysis_id": analysis_id}
+
+REVIEW_STATUSES = {"PENDING_REVIEW", "UNDER_REVIEW", "ESCALATED", "CONFIRMED_MALICIOUS", "CONFIRMED_BENIGN", "INCONCLUSIVE", "CLOSED"}
+REVIEW_LABELS = {"MALICIOUS", "BENIGN", "INCONCLUSIVE"}
+
+def _message_row(kind: str, analysis_id: int, db: Session):
+    normalized = kind.lower()
+    if normalized == "text":
+        row = db.get(MessageAnalysisRecord, analysis_id)
+        meta = db.query(MessageAnalysisMetadata).filter(MessageAnalysisMetadata.message_analysis_id == analysis_id).first()
+    elif normalized == "email":
+        row = db.get(EmailAnalysis, analysis_id)
+        meta = db.query(MessageAnalysisMetadata).filter(MessageAnalysisMetadata.email_analysis_id == analysis_id).first()
+    else:
+        raise HTTPException(400, "analysis_type must be text or email")
+    if not row or not meta:
+        raise HTTPException(404, "Message analysis not found")
+    return row, meta, normalized
+
+def _review_summary(review: MessageReview) -> dict:
+    return {"review_id": review.id, "analysis_id": review.message_analysis_id or review.email_analysis_id, "analysis_type": "TEXT" if review.message_analysis_id else "EML", "status": review.status, "assigned_reviewer": review.assigned_reviewer, "decision_reason": review.decision_reason, "created_by": review.created_by, "updated_by": review.updated_by, "created_at": review.created_at, "updated_at": review.updated_at}
+
+@router.get("/message-analysis/reports/{analysis_type}/{analysis_id}")
+def export_message_report(analysis_type: str, analysis_id: int, format: str = Query("json"), principal: Principal = Depends(get_current_principal), x_admin_token: str | None = Header(default=None), db: Session = Depends(get_db)):
+    row, meta, normalized = _message_row(analysis_type, analysis_id, db)
+    if not _can_view(meta, principal.user_id, principal.role == "admin" or _admin(x_admin_token), principal.legacy_ids):
+        raise HTTPException(404, "Message analysis not found")
+    report = build_message_report(normalized, row, meta)
+    selected = format.lower()
+    if selected == "json":
+        return report
+    if selected == "csv":
+        return Response(content=report_csv_bytes(report), media_type="text/csv", headers={"Content-Disposition": f'attachment; filename="message-analysis-{analysis_id}.csv"'})
+    if selected == "pdf":
+        return Response(content=report_pdf_bytes(report), media_type="application/pdf", headers={"Content-Disposition": f'attachment; filename="message-analysis-{analysis_id}.pdf"'})
+    raise HTTPException(400, "format must be json, csv, or pdf")
+
+@router.get("/admin/message-reviews")
+def list_message_reviews(status: str | None = Query(None), page: int = Query(1, ge=1), page_size: int = Query(20, ge=1, le=100), principal: Principal = Depends(get_current_principal), _: None = Depends(admin_only), db: Session = Depends(get_db)):
+    query = db.query(MessageReview)
+    if status:
+        if status not in REVIEW_STATUSES: raise HTTPException(400, "Unknown review status")
+        query = query.filter(MessageReview.status == status)
+    total = query.count(); reviews = query.order_by(MessageReview.updated_at.desc()).offset((page - 1) * page_size).limit(page_size).all()
+    items=[]
+    for review in reviews:
+        analysis_id = review.message_analysis_id or review.email_analysis_id
+        meta = db.query(MessageAnalysisMetadata).filter((MessageAnalysisMetadata.message_analysis_id == analysis_id) if review.message_analysis_id else (MessageAnalysisMetadata.email_analysis_id == analysis_id)).first()
+        item = _review_summary(review); item["risk_score"] = meta.risk_score if meta else None; item["classification"] = meta.classification if meta else None; item["sender"] = meta.sender if meta else None; item["subject"] = meta.subject if meta else None; items.append(item)
+    return {"items": items, "page": page, "page_size": page_size, "total": total, "pages": (total + page_size - 1) // page_size}
+
+@router.get("/admin/message-reviews/{review_id}")
+def get_message_review(review_id: int, principal: Principal = Depends(get_current_principal), _: None = Depends(admin_only), db: Session = Depends(get_db)):
+    review = db.get(MessageReview, review_id)
+    if not review: raise HTTPException(404, "Review not found")
+    analysis_id = review.message_analysis_id or review.email_analysis_id; kind = "text" if review.message_analysis_id else "email"; row, meta, _ = _message_row(kind, analysis_id, db)
+    return {"review": _review_summary(review), "report": build_message_report(kind, row, meta), "audit": [{"reviewer_id": x.reviewer_id, "action": x.action, "previous_status": x.previous_status, "new_status": x.new_status, "reason": x.reason, "note": x.note, "created_at": x.created_at} for x in db.query(MessageReviewAudit).filter(MessageReviewAudit.review_id == review_id).order_by(MessageReviewAudit.created_at).all()], "feedback": [{"reviewer_id": x.reviewer_id, "label": x.label, "certainty": x.certainty, "evidence": x.evidence, "approval_status": x.approval_status, "created_at": x.created_at} for x in db.query(MessageReviewFeedback).filter(MessageReviewFeedback.review_id == review_id).order_by(MessageReviewFeedback.created_at).all()]}
+
+@router.post("/admin/message-reviews/open/{analysis_type}/{analysis_id}")
+def create_message_review(analysis_type: str, analysis_id: int, principal: Principal = Depends(get_current_principal), _: None = Depends(admin_only), db: Session = Depends(get_db)):
+    row, meta, normalized = _message_row(analysis_type, analysis_id, db)
+    review = db.query(MessageReview).filter((MessageReview.message_analysis_id == analysis_id) if normalized == "text" else (MessageReview.email_analysis_id == analysis_id)).first()
+    if review: return _review_summary(review)
+    actor = principal.external_subject or principal.user_id; review = MessageReview(message_analysis_id=analysis_id if normalized == "text" else None, email_analysis_id=analysis_id if normalized == "email" else None, created_by=actor, updated_by=actor); db.add(review); db.flush(); db.add(MessageReviewAudit(review_id=review.id, reviewer_id=actor, action="created", new_status=review.status, note="Review opened")); db.commit(); db.refresh(review); return _review_summary(review)
+
+@router.post("/admin/message-reviews/{review_id}/status")
+def update_message_review_status(review_id: int, payload: dict, principal: Principal = Depends(get_current_principal), _: None = Depends(admin_only), db: Session = Depends(get_db)):
+    review = db.get(MessageReview, review_id)
+    if not review: raise HTTPException(404, "Review not found")
+    status = str(payload.get("status") or "").upper()
+    if status not in REVIEW_STATUSES: raise HTTPException(400, "Invalid review status")
+    if review.status in {"CONFIRMED_MALICIOUS", "CONFIRMED_BENIGN", "CLOSED"} and status != "CLOSED": raise HTTPException(409, "Finalized review cannot be reopened")
+    actor = principal.external_subject or principal.user_id; previous = review.status; review.status = status; review.decision_reason = str(payload.get("reason") or "")[:4000] or None; review.updated_by = actor; review.updated_at = datetime.now(timezone.utc); db.add(MessageReviewAudit(review_id=review.id, reviewer_id=actor, action="status_changed", previous_status=previous, new_status=status, reason=review.decision_reason, note=str(payload.get("note") or "")[:4000] or None)); db.commit(); return _review_summary(review)
+
+@router.post("/admin/message-reviews/{review_id}/assign")
+def assign_message_review(review_id: int, payload: dict, principal: Principal = Depends(get_current_principal), _: None = Depends(admin_only), db: Session = Depends(get_db)):
+    review = db.get(MessageReview, review_id)
+    if not review: raise HTTPException(404, "Review not found")
+    assigned = str(payload.get("reviewer_id") or "").strip()
+    if not assigned or len(assigned) > 512: raise HTTPException(400, "reviewer_id is required")
+    actor = principal.external_subject or principal.user_id; review.assigned_reviewer = assigned; review.updated_by = actor; review.updated_at = datetime.now(timezone.utc); db.add(MessageReviewAudit(review_id=review.id, reviewer_id=actor, action="assigned", note=f"Assigned to {assigned}")); db.commit(); return _review_summary(review)
+
+@router.post("/admin/message-reviews/{review_id}/feedback")
+def add_message_review_feedback(review_id: int, payload: dict, principal: Principal = Depends(get_current_principal), _: None = Depends(admin_only), db: Session = Depends(get_db)):
+    review = db.get(MessageReview, review_id)
+    if not review: raise HTTPException(404, "Review not found")
+    label = str(payload.get("label") or "").upper()
+    if label not in REVIEW_LABELS: raise HTTPException(400, "label must be MALICIOUS, BENIGN, or INCONCLUSIVE")
+    actor = principal.external_subject or principal.user_id; evidence = str(payload.get("evidence") or "")[:8000]; db.add(MessageReviewFeedback(review_id=review.id, reviewer_id=actor, label=label, certainty=str(payload.get("certainty") or "")[:30] or None, evidence=evidence or None, approval_status="PENDING_VALIDATION")); db.add(MessageReviewAudit(review_id=review.id, reviewer_id=actor, action="feedback_submitted", note="Feedback queued for dataset validation")); db.commit(); return {"review_id": review.id, "label": label, "approval_status": "PENDING_VALIDATION"}
 
 @router.get("/ml/status")
 def model_status():
