@@ -232,6 +232,17 @@ Phase 5 adds persisted human review without overwriting automated analysis:
 
 Phase 5 verification: backend suite `130 passed, 1 skipped`; Phase 5 report/review tests `2 passed`; frontend typecheck and production build pass; frontend component suite passes after excluding Playwright files from the Vitest script. Browser E2E remains a separate `npm run test:e2e` command and requires the running app/browser fixture.
 
+## Phase 6 ML model and dataset lifecycle
+
+Phase 6 preserves the existing TF-IDF + Logistic Regression classifier while adding reproducibility and controlled deployment:
+
+- Migration 020_ml_registry.sql adds dataset versions, model versions, training runs and deployment history.
+- backend/app/services/ml_registry.py validates dataset labels/content, detects duplicates and inconsistent labels, records class distributions/checksums, and verifies model artifact checksums.
+- Training now writes candidate artifacts under models/candidates/ by default and records model version, dataset version, preprocessing version, feature configuration and expanded metrics including macro/weighted F1, ROC-AUC, PR-AUC and Brier score. It never updates the production pointer automatically.
+- Admin APIs under /api/ml/ support registry inspection, dataset registration/approval, model registration/approval, controlled deployment and rollback. Only approved artifacts with unchanged checksums may be deployed.
+- The active model loader uses a validated models/production_pointer.json when present and otherwise preserves the existing models/phishing_message_model.joblib path. Historical message records retain their model version metadata.
+- The dashboard includes an ML Model Management panel showing the active model, dataset versions, metrics, approval status, deployments and rollback controls.
+
 ## Structure
 
 `frontend/` Vite/React dashboard · `backend/` FastAPI API, engines, persistence, and migrations · `engines/` model/detection modules · `dataset/` local training data · `tests/` automated backend tests · `docs/` architecture notes · `infrastructure/` deployment notes.

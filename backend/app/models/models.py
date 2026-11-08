@@ -199,3 +199,19 @@ class MessageReviewAudit(Base):
 class MessageReviewFeedback(Base):
     __tablename__ = "message_review_feedback"
     id=Column(Integer,primary_key=True); review_id=Column(Integer,ForeignKey("message_reviews.id"),index=True,nullable=False); reviewer_id=Column(String(512),nullable=False); label=Column(String(40),nullable=False); certainty=Column(String(30)); evidence=Column(Text); approval_status=Column(String(30),nullable=False,default="PENDING_VALIDATION"); created_at=Column(DateTime,default=lambda:datetime.now(timezone.utc))
+
+class MLDatasetVersion(Base):
+    __tablename__ = "ml_dataset_versions"
+    id=Column(Integer,primary_key=True); dataset_id=Column(String(160),index=True,nullable=False); version=Column(String(80),nullable=False); source=Column(Text,nullable=False); checksum=Column(String(64),nullable=False); record_count=Column(Integer,nullable=False); class_distribution_json=Column(Text,nullable=False,default="{}"); quality_json=Column(Text,nullable=False,default="{}"); preprocessing_version=Column(String(120),nullable=False); validation_status=Column(String(30),nullable=False,default="PENDING"); approval_status=Column(String(30),nullable=False,default="PENDING"); created_by=Column(String(512),nullable=False); created_at=Column(DateTime,default=lambda:datetime.now(timezone.utc)); __table_args__=(UniqueConstraint("dataset_id","version",name="uq_ml_dataset_version"),)
+
+class MLModelVersion(Base):
+    __tablename__ = "ml_model_versions"
+    id=Column(Integer,primary_key=True); model_id=Column(String(160),index=True,nullable=False); version=Column(String(80),nullable=False); name=Column(String(255),nullable=False); algorithm=Column(String(120),nullable=False); dataset_version_id=Column(Integer,ForeignKey("ml_dataset_versions.id"),index=True); artifact_location=Column(Text,nullable=False); artifact_checksum=Column(String(64),nullable=False); feature_config_json=Column(Text,nullable=False,default="{}"); hyperparameters_json=Column(Text,nullable=False,default="{}"); metrics_json=Column(Text,nullable=False,default="{}"); status=Column(String(30),nullable=False,default="CANDIDATE"); approval_by=Column(String(512)); approved_at=Column(DateTime); created_by=Column(String(512),nullable=False); created_at=Column(DateTime,default=lambda:datetime.now(timezone.utc)); __table_args__=(UniqueConstraint("model_id","version",name="uq_ml_model_version"),)
+
+class MLDeploymentHistory(Base):
+    __tablename__ = "ml_deployment_history"
+    id=Column(Integer,primary_key=True); model_version_id=Column(Integer,ForeignKey("ml_model_versions.id"),index=True,nullable=False); previous_model_version_id=Column(Integer); action=Column(String(30),nullable=False); actor=Column(String(512),nullable=False); artifact_checksum=Column(String(64),nullable=False); created_at=Column(DateTime,default=lambda:datetime.now(timezone.utc)); reason=Column(Text)
+
+class MLTrainingRun(Base):
+    __tablename__ = "ml_training_runs"
+    id=Column(Integer,primary_key=True); dataset_version_id=Column(Integer,ForeignKey("ml_dataset_versions.id"),index=True,nullable=False); model_version_id=Column(Integer,ForeignKey("ml_model_versions.id"),index=True); status=Column(String(30),nullable=False,default="PENDING"); metrics_json=Column(Text,default="{}"); error=Column(Text); started_at=Column(DateTime); completed_at=Column(DateTime); created_by=Column(String(512),nullable=False); created_at=Column(DateTime,default=lambda:datetime.now(timezone.utc))

@@ -3,11 +3,12 @@ import json
 import re
 import secrets
 from datetime import datetime, timezone
+from pathlib import Path
 from fastapi import APIRouter, Depends, HTTPException, Header, UploadFile, File, BackgroundTasks, Query, Response
 from sqlalchemy import or_
 from sqlalchemy.orm import Session
 from backend.app.db.session import get_db, SessionLocal
-from backend.app.models.models import Scan, CommunityReport, DomainIntelligence, ProviderVerdict, ThreatIndicator, RedirectHop, BrandRegistry, BrandVerificationEvidence, BrandVerificationChallenge, BrandVerificationAudit, BrandLogoAsset, BrandImageReference, WebsiteImageCandidate, ImageComparison, CertificateRecord, CertificateChainLink, CertificateValidationResult, CertificateRevocationResult, CertificateRevocationJob, CertificateTransparencyEntry, CertificateTransparencyAnomaly, CertificateRiskAssessment, EmailAnalysis, EmailHeader, EmailAuthenticationResult, EmailHeaderAnomaly, EmailRawMessage, EmailSmtpContext, EmailVerificationRun, MessageAnalysisRecord, MessageIndicatorResult, MessageDomainSpoofingFinding, EmailProviderRegistry, ContactRiskAssessment, IntelligenceVerification, BackgroundTaskRun, MessageAnalysisMetadata, MessageContent, MessageAnalysisEvent, AppUser, LegacyIdentityLink, MessageReview, MessageReviewAudit, MessageReviewFeedback
+from backend.app.models.models import Scan, CommunityReport, DomainIntelligence, ProviderVerdict, ThreatIndicator, RedirectHop, BrandRegistry, BrandVerificationEvidence, BrandVerificationChallenge, BrandVerificationAudit, BrandLogoAsset, BrandImageReference, WebsiteImageCandidate, ImageComparison, CertificateRecord, CertificateChainLink, CertificateValidationResult, CertificateRevocationResult, CertificateRevocationJob, CertificateTransparencyEntry, CertificateTransparencyAnomaly, CertificateRiskAssessment, EmailAnalysis, EmailHeader, EmailAuthenticationResult, EmailHeaderAnomaly, EmailRawMessage, EmailSmtpContext, EmailVerificationRun, MessageAnalysisRecord, MessageIndicatorResult, MessageDomainSpoofingFinding, EmailProviderRegistry, ContactRiskAssessment, IntelligenceVerification, BackgroundTaskRun, MessageAnalysisMetadata, MessageContent, MessageAnalysisEvent, AppUser, LegacyIdentityLink, MessageReview, MessageReviewAudit, MessageReviewFeedback, MLDatasetVersion, MLModelVersion, MLDeploymentHistory, MLTrainingRun
 from backend.app.schemas.schemas import ScanRequest, ReportRequest
 from backend.app.services.scanner import scan
 from backend.app.services.scanner import _destination_providers
@@ -39,6 +40,7 @@ from backend.app.engines.certificate_chain import _trusted_roots
 from backend.app.engines.certificate_revocation import analyze_chain
 from backend.app.engines.ca_reputation import configuration_status as ca_reputation_configuration
 from backend.app.services.message_reports import bundle as build_message_report, csv_bytes as report_csv_bytes, pdf_bytes as report_pdf_bytes
+from backend.app.services.ml_registry import validate_dataset, artifact_metadata, _safe_artifact, POINTER, MODEL_ROOT
 from cryptography import x509
 
 router = APIRouter()
@@ -740,6 +742,72 @@ def add_message_review_feedback(review_id: int, payload: dict, principal: Princi
 @router.get("/ml/status")
 def model_status():
     return ml_status()
+
+@router.get("/ml/registry")
+def ml_registry(principal: Principal = Depends(get_current_principal), _: None = Depends(admin_only), db: Session = Depends(get_db)):
+    datasets=db.query(MLDatasetVersion).order_by(MLDatasetVersion.created_at.desc()).limit(100).all()
+    models=db.query(MLModelVersion).order_by(MLModelVersion.created_at.desc()).limit(100).all()
+    deployments=db.query(MLDeploymentHistory).order_by(MLDeploymentHistory.created_at.desc()).limit(100).all()
+    runs=db.query(MLTrainingRun).order_by(MLTrainingRun.created_at.desc()).limit(100).all()
+    return {"production": ml_status(), "datasets":[{"id":x.id,"dataset_id":x.dataset_id,"version":x.version,"source":x.source,"checksum":x.checksum,"record_count":x.record_count,"class_distribution":json.loads(x.class_distribution_json or "{}"),"quality":json.loads(x.quality_json or "{}"),"preprocessing_version":x.preprocessing_version,"validation_status":x.validation_status,"approval_status":x.approval_status,"created_at":x.created_at} for x in datasets], "models":[{"id":x.id,"model_id":x.model_id,"version":x.version,"name":x.name,"algorithm":x.algorithm,"dataset_version_id":x.dataset_version_id,"artifact_location":x.artifact_location,"artifact_checksum":x.artifact_checksum,"metrics":json.loads(x.metrics_json or "{}"),"status":x.status,"approval_by":x.approval_by,"approved_at":x.approved_at,"created_at":x.created_at} for x in models], "deployments":[{"id":x.id,"model_version_id":x.model_version_id,"previous_model_version_id":x.previous_model_version_id,"action":x.action,"actor":x.actor,"created_at":x.created_at,"reason":x.reason} for x in deployments], "training_runs":[{"id":x.id,"dataset_version_id":x.dataset_version_id,"model_version_id":x.model_version_id,"status":x.status,"metrics":json.loads(x.metrics_json or "{}"),"error":x.error,"created_at":x.created_at} for x in runs]}
+
+@router.post("/ml/datasets/register")
+def register_ml_dataset(payload: dict, principal: Principal = Depends(get_current_principal), _: None = Depends(admin_only), db: Session = Depends(get_db)):
+    try: quality=validate_dataset(str(payload.get("path") or ""), int(payload.get("max_rows") or 500000))
+    except (ValueError, FileNotFoundError) as exc: raise HTTPException(400, str(exc)) from exc
+    dataset_id=str(payload.get("dataset_id") or Path(quality["path"]).stem)[:160]; version=str(payload.get("version") or "v1")[:80]; actor=principal.external_subject or principal.user_id
+    if db.query(MLDatasetVersion).filter(MLDatasetVersion.dataset_id == dataset_id, MLDatasetVersion.version == version).first(): raise HTTPException(409, "Dataset version already registered")
+    row=MLDatasetVersion(dataset_id=dataset_id,version=version,source=str(payload.get("source") or quality["path"])[:2000],checksum=quality["checksum"],record_count=quality["record_count"],class_distribution_json=json.dumps(quality["class_distribution"]),quality_json=json.dumps(quality["quality"]),preprocessing_version=str(payload.get("preprocessing_version") or "message-text-v1"),validation_status=quality["validation_status"],approval_status="PENDING",created_by=actor); db.add(row); db.commit(); db.refresh(row); return {"id":row.id,"dataset_id":dataset_id,"version":version,"validation_status":row.validation_status,"approval_status":row.approval_status,"quality":quality}
+
+@router.post("/ml/datasets/{dataset_id}/approve")
+def approve_ml_dataset(dataset_id: int, principal: Principal = Depends(get_current_principal), _: None = Depends(admin_only), db: Session = Depends(get_db)):
+    row=db.get(MLDatasetVersion,dataset_id)
+    if not row: raise HTTPException(404,"Dataset version not found")
+    if row.validation_status != "VALID": raise HTTPException(409,"Dataset must pass validation before approval")
+    row.approval_status="APPROVED"; db.commit(); return {"id":row.id,"approval_status":row.approval_status}
+
+@router.post("/ml/models/register")
+def register_ml_model(payload: dict, principal: Principal = Depends(get_current_principal), _: None = Depends(admin_only), db: Session = Depends(get_db)):
+    try: info=artifact_metadata(str(payload.get("artifact_location") or ""))
+    except (ValueError, FileNotFoundError) as exc: raise HTTPException(400,str(exc)) from exc
+    dataset_id=payload.get("dataset_version_id"); dataset=db.get(MLDatasetVersion,int(dataset_id)) if dataset_id else None
+    if dataset_id and not dataset: raise HTTPException(404,"Dataset version not found")
+    if dataset and dataset.approval_status != "APPROVED": raise HTTPException(409,"Dataset version must be approved")
+    model_id=str(payload.get("model_id") or "tfidf-logistic-message-classifier")[:160]; version=str(payload.get("version") or info.get("model_version") or "candidate-1")[:80]; actor=principal.external_subject or principal.user_id
+    if db.query(MLModelVersion).filter(MLModelVersion.model_id == model_id, MLModelVersion.version == version).first(): raise HTTPException(409,"Model version already registered")
+    row=MLModelVersion(model_id=model_id,version=version,name=str(payload.get("name") or info.get("name") or model_id)[:255],algorithm=str(payload.get("algorithm") or "TF-IDF + Logistic Regression")[:120],dataset_version_id=dataset.id if dataset else None,artifact_location=info["path"],artifact_checksum=info["checksum"],feature_config_json=json.dumps(info.get("feature_config",{})),hyperparameters_json=json.dumps(info.get("hyperparameters",{})),metrics_json=json.dumps(info.get("metrics",{})),status="CANDIDATE",created_by=actor); db.add(row); db.commit(); db.refresh(row); return {"id":row.id,"model_id":model_id,"version":version,"artifact_checksum":row.artifact_checksum,"status":row.status,"inspection":info}
+
+@router.post("/ml/models/{model_id}/approve")
+def approve_ml_model(model_id: int, principal: Principal = Depends(get_current_principal), _: None = Depends(admin_only), db: Session = Depends(get_db)):
+    row=db.get(MLModelVersion,model_id)
+    if not row: raise HTTPException(404,"Model version not found")
+    try: info=artifact_metadata(row.artifact_location)
+    except (ValueError, FileNotFoundError) as exc: raise HTTPException(400,str(exc)) from exc
+    if info["checksum"] != row.artifact_checksum: raise HTTPException(409,"Artifact checksum changed")
+    row.status="APPROVED"; row.approval_by=principal.external_subject or principal.user_id; row.approved_at=datetime.now(timezone.utc); db.commit(); return {"id":row.id,"status":row.status,"approved_at":row.approved_at}
+
+@router.post("/ml/models/{model_id}/deploy")
+def deploy_ml_model(model_id: int, payload: dict | None = None, principal: Principal = Depends(get_current_principal), _: None = Depends(admin_only), db: Session = Depends(get_db)):
+    row=db.get(MLModelVersion,model_id)
+    if not row: raise HTTPException(404,"Model version not found")
+    if row.status != "APPROVED": raise HTTPException(409,"Only approved models may be deployed")
+    try: info=artifact_metadata(row.artifact_location)
+    except (ValueError, FileNotFoundError) as exc: raise HTTPException(400,str(exc)) from exc
+    if info["checksum"] != row.artifact_checksum: raise HTTPException(409,"Artifact checksum changed")
+    current=db.query(MLModelVersion).filter(MLModelVersion.status == "PRODUCTION").first(); previous=current.id if current else None
+    if current and current.id != row.id: current.status="ARCHIVED"
+    row.status="PRODUCTION"; MODEL_ROOT.mkdir(parents=True,exist_ok=True); POINTER.write_text(json.dumps({"model_version_id":row.id,"artifact_location":row.artifact_location,"checksum":row.artifact_checksum}),encoding="utf-8"); actor=principal.external_subject or principal.user_id; db.add(MLDeploymentHistory(model_version_id=row.id,previous_model_version_id=previous,action="DEPLOY",actor=actor,artifact_checksum=row.artifact_checksum,reason=str((payload or {}).get("reason") or "Approved deployment"))); db.commit(); return {"deployed":True,"model_version_id":row.id,"previous_model_version_id":previous}
+
+@router.post("/ml/models/{model_id}/rollback")
+def rollback_ml_model(model_id: int, principal: Principal = Depends(get_current_principal), _: None = Depends(admin_only), db: Session = Depends(get_db)):
+    target=db.get(MLModelVersion,model_id)
+    if not target: raise HTTPException(404,"Model version not found")
+    try: info=artifact_metadata(target.artifact_location)
+    except (ValueError, FileNotFoundError) as exc: raise HTTPException(400,str(exc)) from exc
+    if info["checksum"] != target.artifact_checksum: raise HTTPException(409,"Artifact checksum changed")
+    current=db.query(MLModelVersion).filter(MLModelVersion.status == "PRODUCTION").first()
+    if current and current.id != target.id: current.status="ARCHIVED"
+    target.status="PRODUCTION"; MODEL_ROOT.mkdir(parents=True,exist_ok=True); POINTER.write_text(json.dumps({"model_version_id":target.id,"artifact_location":target.artifact_location,"checksum":target.artifact_checksum}),encoding="utf-8"); actor=principal.external_subject or principal.user_id; db.add(MLDeploymentHistory(model_version_id=target.id,previous_model_version_id=current.id if current else None,action="ROLLBACK",actor=actor,artifact_checksum=target.artifact_checksum,reason="Controlled rollback")); db.commit(); return {"rolled_back":True,"model_version_id":target.id}
 
 @router.get("/llm/status")
 def llm_status():

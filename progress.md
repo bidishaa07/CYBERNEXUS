@@ -344,3 +344,16 @@ This checklist records repository implementation and observed runtime state. A c
 - [x] Regression verification: backend `130 passed, 1 skipped`; frontend typecheck/build passed; Vitest component suite passes with Playwright excluded from the Vitest command.
 - [ ] A live OIDC admin identity and running browser E2E environment still need to be configured for live administrator/browser verification.
 - [ ] Phase 6 model version management and automated retraining have not started.
+
+### Phase 6 - ML model registry and dataset version management
+
+- [x] Added migration 020_ml_registry.sql for dataset versions, model versions, training runs and deployment history.
+- [x] Added dataset checksum/version records and validation for missing content, malformed labels, duplicate messages, conflicting duplicate labels, class distribution and leakage warnings.
+- [x] Preserved the TF-IDF/Logistic Regression pipeline and changed new training output to the candidate artifact directory so production is not overwritten by training.
+- [x] Added model metadata for feature configuration, hyperparameters, dataset version, preprocessing version, artifact checksum and expanded evaluation metrics.
+- [x] Added admin-only dataset/model registry APIs, approval gates, artifact checksum verification, controlled deployment and rollback pointer history.
+- [x] Added active production model pointer support with safe fallback to the existing production artifact.
+- [x] Added ML Model Management dashboard panel with production status, datasets, candidate approval, deployment and rollback actions.
+- [x] Verification: backend regression suite 130 passed, 1 skipped; ML registry tests added; frontend typecheck, component tests and production build pass.
+- [ ] Existing production artifact has no embedded dataset version, so it is reported as UNKNOWN until registered or retrained with explicit lifecycle metadata.
+- [ ] Phase 7 automated retraining, evaluation approval automation and deployment scheduling have not started.
