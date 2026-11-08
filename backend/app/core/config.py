@@ -7,6 +7,17 @@ class Settings(BaseSettings):
     database_pool_timeout_seconds: int = 30
     database_connect_timeout_seconds: int = 10
     environment: str = "development"
+    auth_required: bool = False
+    oidc_issuer_url: str = ""
+    oidc_jwks_url: str = ""
+    oidc_audience: str = ""
+    oidc_client_id: str = ""
+    oidc_authorization_url: str = ""
+    oidc_redirect_uri: str = "http://localhost:5173/auth/callback"
+    oidc_scopes: str = "openid profile email"
+    session_cookie_name: str = "digital_trust_session"
+    session_max_age_seconds: int = 3600
+    oidc_admin_roles: str = "admin"
     redis_url: str = ""
     redis_namespace: str = "digital-trust"
     redis_timeout_seconds: float = 2

@@ -179,3 +179,11 @@ class MessageContent(Base):
 class MessageAnalysisEvent(Base):
     __tablename__ = "message_analysis_events"
     id=Column(Integer,primary_key=True); message_analysis_id=Column(Integer,ForeignKey("message_analysis_records.id"),index=True); email_analysis_id=Column(Integer,ForeignKey("email_analyses.id"),index=True); user_id=Column(String(160),nullable=False); event_type=Column(String(60),nullable=False); details_json=Column(Text,nullable=False,default="{}"); created_at=Column(DateTime,default=lambda:datetime.now(timezone.utc))
+
+class AppUser(Base):
+    __tablename__ = "app_users"
+    id=Column(Integer,primary_key=True); external_subject=Column(String(512),unique=True,index=True,nullable=False); email=Column(String(512),index=True); display_name=Column(String(255)); role=Column(String(40),nullable=False,default="user"); account_status=Column(String(30),nullable=False,default="active"); created_at=Column(DateTime,default=lambda:datetime.now(timezone.utc)); last_login_at=Column(DateTime)
+
+class LegacyIdentityLink(Base):
+    __tablename__ = "legacy_identity_links"
+    id=Column(Integer,primary_key=True); legacy_user_id=Column(String(160),unique=True,index=True,nullable=False); external_subject=Column(String(512),index=True,nullable=False); linked_by=Column(String(512),nullable=False); created_at=Column(DateTime,default=lambda:datetime.now(timezone.utc))

@@ -203,7 +203,21 @@ History API endpoints:
 - `DELETE /api/message-analysis/text/{analysis_id}` — ownership/admin-protected deletion with child-record cleanup.
 - `GET /api/message-analysis/email/{analysis_id}` and `DELETE /api/message-analysis/email/{analysis_id}` — protected email retrieval/deletion.
 
-Use `X-User-ID` for application-level ownership identity and `X-Admin-Token` for administrator access. The current repository does not yet include a full user-account/session service, so production deployments should place these endpoints behind the existing identity gateway before treating the header as an authenticated identity.
+Use verified OIDC sessions for production ownership. `X-User-ID` remains only a development compatibility path when authentication is not required; it is ignored when `ENVIRONMENT=production` or `AUTH_REQUIRED=true`.
+
+## OIDC authentication and identity
+
+The Phase 4 ownership limitation is now addressed with an OIDC-compatible JWT/JWKS adapter. Configure `OIDC_ISSUER_URL`, `OIDC_JWKS_URL` (or issuer discovery), and `OIDC_AUDIENCE`; the backend validates signing keys, issuer, audience, expiration and subject claims, synchronizes users into `app_users`, and derives message ownership from the verified subject. In production, `AUTH_REQUIRED=true` or `ENVIRONMENT=production` disables legacy header ownership.
+
+Authentication endpoints:
+
+- `GET /api/auth/config` — non-secret OIDC configuration for the frontend.
+- `GET /api/auth/me` — verified session identity.
+- `POST /api/auth/session` — validates a bearer token and sets an HttpOnly session cookie.
+- `POST /api/auth/logout` — clears the session cookie.
+- `POST /api/admin/identity-links` — explicitly links a legacy owner ID to an already-authenticated external subject and records an audit event.
+
+The frontend includes an OIDC sign-in/logout status panel and sends cookies using `credentials: include`. Registration and password handling remain with the configured identity provider; the application never stores provider passwords or refresh tokens.
 
 ## Structure
 

@@ -3,11 +3,11 @@ import json
 import re
 import secrets
 from datetime import datetime, timezone
-from fastapi import APIRouter, Depends, HTTPException, Header, UploadFile, File, BackgroundTasks, Query
+from fastapi import APIRouter, Depends, HTTPException, Header, UploadFile, File, BackgroundTasks, Query, Response
 from sqlalchemy import or_
 from sqlalchemy.orm import Session
 from backend.app.db.session import get_db, SessionLocal
-from backend.app.models.models import Scan, CommunityReport, DomainIntelligence, ProviderVerdict, ThreatIndicator, RedirectHop, BrandRegistry, BrandVerificationEvidence, BrandVerificationChallenge, BrandVerificationAudit, BrandLogoAsset, BrandImageReference, WebsiteImageCandidate, ImageComparison, CertificateRecord, CertificateChainLink, CertificateValidationResult, CertificateRevocationResult, CertificateRevocationJob, CertificateTransparencyEntry, CertificateTransparencyAnomaly, CertificateRiskAssessment, EmailAnalysis, EmailHeader, EmailAuthenticationResult, EmailHeaderAnomaly, EmailRawMessage, EmailSmtpContext, EmailVerificationRun, MessageAnalysisRecord, MessageIndicatorResult, MessageDomainSpoofingFinding, EmailProviderRegistry, ContactRiskAssessment, IntelligenceVerification, BackgroundTaskRun, MessageAnalysisMetadata, MessageContent, MessageAnalysisEvent
+from backend.app.models.models import Scan, CommunityReport, DomainIntelligence, ProviderVerdict, ThreatIndicator, RedirectHop, BrandRegistry, BrandVerificationEvidence, BrandVerificationChallenge, BrandVerificationAudit, BrandLogoAsset, BrandImageReference, WebsiteImageCandidate, ImageComparison, CertificateRecord, CertificateChainLink, CertificateValidationResult, CertificateRevocationResult, CertificateRevocationJob, CertificateTransparencyEntry, CertificateTransparencyAnomaly, CertificateRiskAssessment, EmailAnalysis, EmailHeader, EmailAuthenticationResult, EmailHeaderAnomaly, EmailRawMessage, EmailSmtpContext, EmailVerificationRun, MessageAnalysisRecord, MessageIndicatorResult, MessageDomainSpoofingFinding, EmailProviderRegistry, ContactRiskAssessment, IntelligenceVerification, BackgroundTaskRun, MessageAnalysisMetadata, MessageContent, MessageAnalysisEvent, AppUser, LegacyIdentityLink
 from backend.app.schemas.schemas import ScanRequest, ReportRequest
 from backend.app.services.scanner import scan
 from backend.app.services.scanner import _destination_providers
@@ -30,6 +30,7 @@ from backend.app.core.config import settings
 from backend.app.engines.contact_intelligence import phone_analysis
 from backend.app.engines.email_authentication_verification import verify as verify_email_authentication
 from backend.app.services.cache import health as cache_health
+from backend.app.services.auth import Principal, get_current_principal, sync_user, verify_token
 from backend.app.db.session import engine
 from backend.app.engines.google_safe_browsing import configuration_status as google_safe_browsing_configuration, verify_connection as verify_google_safe_browsing
 from backend.app.engines.virustotal import configuration_status as virustotal_configuration, lookup_url as lookup_virustotal_url, submit_url as submit_virustotal_url, poll_analysis as poll_virustotal_analysis
@@ -64,8 +65,8 @@ def _refresh_revocation_job(job_id: int, scan_id: int):
         if job: job.status="FAILED"; job.error=type(exc).__name__; job.completed_at=datetime.now(timezone.utc); db.commit()
     finally: db.close()
 
-def admin_only(x_admin_token: str | None = Header(default=None)):
-    if x_admin_token != settings.admin_api_token: raise HTTPException(403, "Administrator token required")
+def admin_only(x_admin_token: str | None = Header(default=None), principal: Principal = Depends(get_current_principal)):
+    if principal.role != "admin" and x_admin_token != settings.admin_api_token: raise HTTPException(403, "Administrator role required")
 
 def _owner(x_user_id: str | None) -> str:
     value = (x_user_id or "anonymous").strip()
@@ -74,8 +75,8 @@ def _owner(x_user_id: str | None) -> str:
 def _admin(x_admin_token: str | None) -> bool:
     return bool(x_admin_token and x_admin_token == settings.admin_api_token)
 
-def _can_view(meta: MessageAnalysisMetadata, user_id: str, admin: bool) -> bool:
-    return admin or meta.user_id == user_id
+def _can_view(meta: MessageAnalysisMetadata, user_id: str, admin: bool, legacy_ids: tuple[str, ...] = ()) -> bool:
+    return admin or meta.user_id in (user_id, *legacy_ids)
 
 def _metadata_summary(meta: MessageAnalysisMetadata) -> dict:
     return {"analysis_id": meta.message_analysis_id or meta.email_analysis_id, "kind": meta.input_type, "user_id": meta.user_id, "sender": meta.sender, "subject": meta.subject, "created_at": meta.created_at, "risk_score": meta.risk_score, "classification": meta.classification, "ml_prediction": meta.ml_prediction, "ml_confidence": meta.ml_confidence, "llm_status": meta.llm_status, "model_version": meta.model_version, "analysis_status": meta.analysis_status, "duplicate_of_id": meta.duplicate_of_id}
@@ -87,6 +88,34 @@ def health():
         with engine.connect() as connection: connection.execute(__import__("sqlalchemy").text("SELECT 1"))
     except Exception: database = "unavailable"
     return {"status": "ok" if database == "ok" else "degraded", "service": "digital-trust-intelligence", "database": database, "cache": cache_health()}
+
+@router.get("/auth/config")
+def auth_config():
+    return {"provider": "OIDC", "required": settings.auth_required or settings.environment.lower() == "production", "configured": bool(settings.oidc_issuer_url and settings.oidc_audience and (settings.oidc_jwks_url or settings.oidc_issuer_url)), "authorization_url": settings.oidc_authorization_url or None, "client_id": settings.oidc_client_id or None, "redirect_uri": settings.oidc_redirect_uri, "scopes": settings.oidc_scopes.split()}
+
+@router.get("/auth/me")
+def auth_me(principal: Principal = Depends(get_current_principal)):
+    if not principal.authenticated: return {"authenticated": False, "mode": "development"}
+    return {"authenticated": True, "user_id": principal.user_id, "external_subject": principal.external_subject, "role": principal.role}
+
+@router.post("/auth/session")
+def auth_session(response: Response, authorization: str | None = Header(default=None), db: Session = Depends(get_db)):
+    if not authorization or not authorization.startswith("Bearer "): raise HTTPException(401, "Bearer token required")
+    token = authorization[7:].strip(); principal = sync_user(db, verify_token(token)); db.commit(); response.set_cookie(settings.session_cookie_name, token, max_age=settings.session_max_age_seconds, httponly=True, secure=settings.environment.lower() == "production", samesite="lax", path="/")
+    return {"authenticated": True, "user_id": principal.user_id, "role": principal.role}
+
+@router.post("/auth/logout")
+def auth_logout(response: Response):
+    response.delete_cookie(settings.session_cookie_name, path="/"); return {"logged_out": True}
+
+@router.post("/admin/identity-links")
+def link_legacy_identity(payload: dict, principal: Principal = Depends(get_current_principal), x_admin_token: str | None = Header(default=None), db: Session = Depends(get_db)):
+    if principal.role != "admin" and not _admin(x_admin_token): raise HTTPException(403, "Administrator role required")
+    legacy = str(payload.get("legacy_user_id") or "").strip(); subject = str(payload.get("external_subject") or "").strip()
+    if not legacy or not subject: raise HTTPException(400, "legacy_user_id and external_subject are required")
+    if db.query(LegacyIdentityLink).filter(LegacyIdentityLink.legacy_user_id == legacy).first(): raise HTTPException(409, "Legacy identity is already linked")
+    if not db.query(AppUser).filter(AppUser.external_subject == subject).first(): raise HTTPException(404, "External user must authenticate before linking")
+    db.add(LegacyIdentityLink(legacy_user_id=legacy, external_subject=subject, linked_by=principal.external_subject or "admin-token")); db.add(MessageAnalysisEvent(user_id=principal.user_id, event_type="identity_linked", details_json=json.dumps({"legacy_user_id": legacy, "external_subject": subject}))); db.commit(); return {"linked": True, "legacy_user_id": legacy, "external_subject": subject}
 
 @router.get("/intelligence/providers/health")
 def intelligence_provider_health():
@@ -464,13 +493,13 @@ def reports(db: Session = Depends(get_db)):
     return db.query(CommunityReport).order_by(CommunityReport.created_at.desc()).limit(50).all()
 
 @router.post("/message-analysis")
-def message_analysis(payload: dict, x_user_id: str | None = Header(default=None), db: Session = Depends(get_db)):
+def message_analysis(payload: dict, principal: Principal = Depends(get_current_principal), db: Session = Depends(get_db)):
     text = payload.get("text", "")
     if not isinstance(text, str) or not 1 <= len(text) <= 20000: raise HTTPException(400, "text must contain 1-20000 characters")
     brands=[{"brand_name": row.brand_name, "official_domain": row.official_domain, "verification_status": row.verification_status} for row in db.query(BrandRegistry).all()]
     email_providers=[{"domain": row.domain, "provider_name": row.provider_name, "category": row.category, "disposable": row.disposable, "source": row.source, "list_version": row.list_version} for row in db.query(EmailProviderRegistry).all()]
     result=analyze_message(text, brands=brands, email_providers=email_providers)
-    owner = _owner(x_user_id); digest = hashlib.sha256(text.encode()).hexdigest()
+    owner = principal.user_id; digest = hashlib.sha256(text.encode()).hexdigest()
     previous = db.query(MessageAnalysisMetadata).join(MessageAnalysisRecord, MessageAnalysisMetadata.message_analysis_id == MessageAnalysisRecord.id).filter(MessageAnalysisMetadata.user_id == owner, MessageAnalysisRecord.input_sha256 == digest).order_by(MessageAnalysisMetadata.created_at.desc()).first()
     record=MessageAnalysisRecord(input_sha256=digest, source_type="TEXT", result_json=json.dumps(result)); db.add(record); db.flush()
     ml = result.get("ml") or {}
@@ -489,7 +518,7 @@ def message_analysis(payload: dict, x_user_id: str | None = Header(default=None)
     return result
 
 @router.post("/message-analysis/email")
-async def email_message_analysis(file: UploadFile = File(...), x_user_id: str | None = Header(default=None), db: Session = Depends(get_db)):
+async def email_message_analysis(file: UploadFile = File(...), principal: Principal = Depends(get_current_principal), db: Session = Depends(get_db)):
     filename = file.filename or "uploaded.eml"
     if not filename.lower().endswith(".eml"):
         raise HTTPException(400, "Only .eml files are supported")
@@ -508,7 +537,7 @@ async def email_message_analysis(file: UploadFile = File(...), x_user_id: str | 
     brands=[{"brand_name": item.brand_name, "official_domain": item.official_domain, "verification_status": item.verification_status} for item in db.query(BrandRegistry).all()]
     email_providers=[{"domain": item.domain, "provider_name": item.provider_name, "category": item.category, "disposable": item.disposable, "source": item.source, "list_version": item.list_version} for item in db.query(EmailProviderRegistry).all()]
     result["indicator_intelligence"] = analyze_indicators(result.get("indicators", {}), sender=sender, brands=brands, email_providers=email_providers)
-    owner = _owner(x_user_id); digest = hashlib.sha256(raw).hexdigest()
+    owner = principal.user_id; digest = hashlib.sha256(raw).hexdigest()
     previous = db.query(MessageAnalysisMetadata).join(EmailAnalysis, MessageAnalysisMetadata.email_analysis_id == EmailAnalysis.id).filter(MessageAnalysisMetadata.user_id == owner, EmailAnalysis.id.in_(db.query(EmailRawMessage.analysis_id).filter(EmailRawMessage.sha256 == digest))).order_by(MessageAnalysisMetadata.created_at.desc()).first()
     row = EmailAnalysis(filename=filename, content_type=file.content_type or "", size_bytes=len(raw), message_id=sender.get("message_id"), sender=sender.get("from"), subject=sender.get("subject"), analysis_status=result.get("status", "COMPLETED"), result_json=json.dumps(result))
     db.add(row); db.flush(); db.add(EmailRawMessage(analysis_id=row.id, raw_bytes=raw, sha256=hashlib.sha256(raw).hexdigest()))
@@ -564,23 +593,23 @@ def ingest_smtp_context(analysis_id: int, payload: dict, x_smtp_context_token: s
     return result
 
 @router.get("/message-analysis/email/{analysis_id}")
-def email_message_analysis_result(analysis_id: int, user_id: str | None = Header(default=None, alias="X-User-ID"), x_admin_token: str | None = Header(default=None), db: Session = Depends(get_db)):
+def email_message_analysis_result(analysis_id: int, principal: Principal = Depends(get_current_principal), x_admin_token: str | None = Header(default=None), db: Session = Depends(get_db)):
     row = db.get(EmailAnalysis, analysis_id)
     meta = db.query(MessageAnalysisMetadata).filter(MessageAnalysisMetadata.email_analysis_id == analysis_id).first()
-    if not row or not meta or not _can_view(meta, _owner(user_id), _admin(x_admin_token)): raise HTTPException(404, "Email analysis not found")
+    if not row or not meta or not _can_view(meta, principal.user_id, principal.role == "admin" or _admin(x_admin_token), principal.legacy_ids): raise HTTPException(404, "Email analysis not found")
     result = json.loads(row.result_json); result["analysis_id"] = row.id; result["created_at"] = row.created_at; result["metadata"] = _metadata_summary(meta)
     return result
 
 @router.delete("/message-analysis/email/{analysis_id}")
-def delete_email_analysis(analysis_id: int, user_id: str | None = Header(default=None, alias="X-User-ID"), x_admin_token: str | None = Header(default=None), db: Session = Depends(get_db)):
+def delete_email_analysis(analysis_id: int, principal: Principal = Depends(get_current_principal), x_admin_token: str | None = Header(default=None), db: Session = Depends(get_db)):
     row=db.get(EmailAnalysis, analysis_id); meta=db.query(MessageAnalysisMetadata).filter(MessageAnalysisMetadata.email_analysis_id == analysis_id).first()
-    if not row or not meta or not _can_view(meta, _owner(user_id), _admin(x_admin_token)): raise HTTPException(404, "Email analysis not found")
+    if not row or not meta or not _can_view(meta, principal.user_id, principal.role == "admin" or _admin(x_admin_token), principal.legacy_ids): raise HTTPException(404, "Email analysis not found")
     db.query(MessageAnalysisEvent).filter(MessageAnalysisEvent.email_analysis_id == analysis_id).delete(synchronize_session=False); db.query(MessageIndicatorResult).filter(MessageIndicatorResult.email_analysis_id == analysis_id).delete(synchronize_session=False); db.query(MessageDomainSpoofingFinding).filter(MessageDomainSpoofingFinding.email_analysis_id == analysis_id).delete(synchronize_session=False); db.query(ContactRiskAssessment).filter(ContactRiskAssessment.email_analysis_id == analysis_id).delete(synchronize_session=False); db.query(EmailHeader).filter(EmailHeader.analysis_id == analysis_id).delete(synchronize_session=False); db.query(EmailAuthenticationResult).filter(EmailAuthenticationResult.analysis_id == analysis_id).delete(synchronize_session=False); db.query(EmailHeaderAnomaly).filter(EmailHeaderAnomaly.analysis_id == analysis_id).delete(synchronize_session=False); db.query(EmailRawMessage).filter(EmailRawMessage.analysis_id == analysis_id).delete(synchronize_session=False); db.query(EmailVerificationRun).filter(EmailVerificationRun.analysis_id == analysis_id).delete(synchronize_session=False); db.query(EmailSmtpContext).filter(EmailSmtpContext.analysis_id == analysis_id).delete(synchronize_session=False); db.delete(meta); db.delete(row); db.commit(); return {"deleted": True, "analysis_id": analysis_id}
 
 @router.get("/message-analysis/history")
-def message_analysis_history(page: int = Query(1, ge=1), page_size: int = Query(20, ge=1, le=100), search: str | None = Query(default=None), risk: str | None = Query(default=None), input_type: str | None = Query(default=None), provider: str | None = Query(default=None), user_id: str | None = Header(default=None, alias="X-User-ID"), x_admin_token: str | None = Header(default=None), db: Session = Depends(get_db)):
-    owner = _owner(user_id); query = db.query(MessageAnalysisMetadata)
-    if not _admin(x_admin_token): query = query.filter(MessageAnalysisMetadata.user_id == owner)
+def message_analysis_history(page: int = Query(1, ge=1), page_size: int = Query(20, ge=1, le=100), search: str | None = Query(default=None), risk: str | None = Query(default=None), input_type: str | None = Query(default=None), provider: str | None = Query(default=None), principal: Principal = Depends(get_current_principal), x_admin_token: str | None = Header(default=None), db: Session = Depends(get_db)):
+    owner_ids = [principal.user_id, *principal.legacy_ids]; query = db.query(MessageAnalysisMetadata)
+    if not (principal.role == "admin" or _admin(x_admin_token)): query = query.filter(MessageAnalysisMetadata.user_id.in_(owner_ids))
     if search: query = query.filter(or_(MessageAnalysisMetadata.sender.ilike(f"%{search}%"), MessageAnalysisMetadata.subject.ilike(f"%{search}%")))
     if risk: query = query.filter(MessageAnalysisMetadata.classification.ilike(f"%{risk}%"))
     if input_type: query = query.filter(MessageAnalysisMetadata.input_type == input_type.upper())
@@ -592,23 +621,23 @@ def message_analysis_history(page: int = Query(1, ge=1), page_size: int = Query(
     return {"items": [_metadata_summary(item) for item in items], "page": page, "page_size": page_size, "total": total, "pages": (total + page_size - 1) // page_size}
 
 @router.get("/message-analysis/text/{analysis_id}")
-def message_analysis_detail(analysis_id: int, user_id: str | None = Header(default=None, alias="X-User-ID"), x_admin_token: str | None = Header(default=None), db: Session = Depends(get_db)):
+def message_analysis_detail(analysis_id: int, principal: Principal = Depends(get_current_principal), x_admin_token: str | None = Header(default=None), db: Session = Depends(get_db)):
     row = db.get(MessageAnalysisRecord, analysis_id); meta = db.query(MessageAnalysisMetadata).filter(MessageAnalysisMetadata.message_analysis_id == analysis_id).first()
-    if not row or not meta or not _can_view(meta, _owner(user_id), _admin(x_admin_token)): raise HTTPException(404, "Message analysis not found")
+    if not row or not meta or not _can_view(meta, principal.user_id, principal.role == "admin" or _admin(x_admin_token), principal.legacy_ids): raise HTTPException(404, "Message analysis not found")
     result = json.loads(row.result_json); result["analysis_id"] = row.id; result["metadata"] = _metadata_summary(meta); result["history_events"] = [{"event_type": event.event_type, "created_at": event.created_at, "details": json.loads(event.details_json or "{}")} for event in db.query(MessageAnalysisEvent).filter(MessageAnalysisEvent.message_analysis_id == analysis_id).order_by(MessageAnalysisEvent.created_at).all()]; return result
 
 @router.post("/message-analysis/text/{analysis_id}/reanalyze")
-def reanalyze_message(analysis_id: int, user_id: str | None = Header(default=None, alias="X-User-ID"), x_admin_token: str | None = Header(default=None), db: Session = Depends(get_db)):
+def reanalyze_message(analysis_id: int, principal: Principal = Depends(get_current_principal), x_admin_token: str | None = Header(default=None), db: Session = Depends(get_db)):
     old = db.get(MessageAnalysisRecord, analysis_id); meta = db.query(MessageAnalysisMetadata).filter(MessageAnalysisMetadata.message_analysis_id == analysis_id).first(); content = db.query(MessageContent).filter(MessageContent.message_analysis_id == analysis_id).first()
-    if not old or not meta or not content or not _can_view(meta, _owner(user_id), _admin(x_admin_token)): raise HTTPException(404, "Message analysis not found")
+    if not old or not meta or not content or not _can_view(meta, principal.user_id, principal.role == "admin" or _admin(x_admin_token), principal.legacy_ids): raise HTTPException(404, "Message analysis not found")
     text = content.content_bytes.decode(errors="replace"); brands=[{"brand_name": row.brand_name, "official_domain": row.official_domain, "verification_status": row.verification_status} for row in db.query(BrandRegistry).all()]; providers=[{"domain": row.domain, "provider_name": row.provider_name, "category": row.category, "disposable": row.disposable} for row in db.query(EmailProviderRegistry).all()]
     result = analyze_message(text, brands=brands, email_providers=providers); digest = hashlib.sha256(text.encode()).hexdigest(); record = MessageAnalysisRecord(input_sha256=digest, source_type="TEXT", result_json=json.dumps(result)); db.add(record); db.flush(); ml=result.get("ml") or {}; owner=meta.user_id
     db.add(MessageContent(message_analysis_id=record.id, content_bytes=content.content_bytes, sha256=digest, content_type="text/plain")); db.add(MessageAnalysisMetadata(message_analysis_id=record.id, user_id=owner, input_type="TEXT", risk_score=result.get("score"), classification=result.get("classification"), ml_prediction=ml.get("prediction"), ml_confidence=ml.get("malicious_probability"), llm_status=(result.get("llm") or {}).get("status") or "UNAVAILABLE", model_version=ml.get("model") or "current", analysis_status="COMPLETED", duplicate_of_id=analysis_id)); db.add(MessageAnalysisEvent(message_analysis_id=record.id, user_id=owner, event_type="reanalyzed", details_json=json.dumps({"previous_analysis_id": analysis_id}))); db.commit(); result["analysis_id"] = record.id; result["reanalysis_of"] = analysis_id; return result
 
 @router.delete("/message-analysis/text/{analysis_id}")
-def delete_message_analysis(analysis_id: int, user_id: str | None = Header(default=None, alias="X-User-ID"), x_admin_token: str | None = Header(default=None), db: Session = Depends(get_db)):
+def delete_message_analysis(analysis_id: int, principal: Principal = Depends(get_current_principal), x_admin_token: str | None = Header(default=None), db: Session = Depends(get_db)):
     row=db.get(MessageAnalysisRecord, analysis_id); meta=db.query(MessageAnalysisMetadata).filter(MessageAnalysisMetadata.message_analysis_id == analysis_id).first()
-    if not row or not meta or not _can_view(meta, _owner(user_id), _admin(x_admin_token)): raise HTTPException(404, "Message analysis not found")
+    if not row or not meta or not _can_view(meta, principal.user_id, principal.role == "admin" or _admin(x_admin_token), principal.legacy_ids): raise HTTPException(404, "Message analysis not found")
     db.query(MessageAnalysisEvent).filter(MessageAnalysisEvent.message_analysis_id == analysis_id).delete(synchronize_session=False); db.query(MessageContent).filter(MessageContent.message_analysis_id == analysis_id).delete(synchronize_session=False); db.query(ContactRiskAssessment).filter(ContactRiskAssessment.message_analysis_id == analysis_id).delete(synchronize_session=False); db.query(MessageIndicatorResult).filter(MessageIndicatorResult.message_analysis_id == analysis_id).delete(synchronize_session=False); db.query(MessageDomainSpoofingFinding).filter(MessageDomainSpoofingFinding.message_analysis_id == analysis_id).delete(synchronize_session=False); db.delete(meta); db.delete(row); db.commit(); return {"deleted": True, "analysis_id": analysis_id}
 
 @router.get("/ml/status")

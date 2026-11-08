@@ -315,3 +315,17 @@ This checklist records repository implementation and observed runtime state. A c
 - [x] Added deterministic API tests for persistence, detail retrieval, re-analysis and ownership isolation.
 - [x] Verification: full backend suite `126 passed, 1 skipped`; frontend typecheck and production build passed.
 - [ ] Full account/session authentication is not present in the existing application; `X-User-ID` is an ownership boundary pending integration with a real identity provider.
+
+### Phase 4 final - OIDC authentication and identity
+
+- [x] Added OIDC-compatible JWT/JWKS validation with issuer, audience, expiration, subject and signing-key rotation support through PyJWT.
+- [x] Added SQLAlchemy `app_users` and `legacy_identity_links` with migration `018_oidc_identity.sql`.
+- [x] Added identity synchronization, account-status checks and role claim mapping for admin RBAC.
+- [x] Connected create, history, detail, deletion and re-analysis ownership to verified principals in production mode.
+- [x] Production mode rejects missing authentication and ignores client-supplied `X-User-ID` ownership.
+- [x] Added explicit audited legacy identity-link workflow; unclaimed historical records remain protected.
+- [x] Added HttpOnly cookie session creation/logout and frontend authentication status panel.
+- [x] Added restricted CORS methods/headers and cookie credentials handling.
+- [x] Authentication regression tests: missing auth, verified subject synchronization and User A/User B isolation pass.
+- [x] Full backend suite: `128 passed, 1 skipped`; frontend typecheck and production build pass.
+- [ ] A real Keycloak/Auth0/Clerk issuer, JWKS URL, audience and client configuration must still be supplied in the deployment environment; tests use controlled identity fixtures and do not claim live provider connectivity.
