@@ -41,6 +41,7 @@ from backend.app.engines.certificate_revocation import analyze_chain
 from backend.app.engines.ca_reputation import configuration_status as ca_reputation_configuration
 from backend.app.services.message_reports import bundle as build_message_report, csv_bytes as report_csv_bytes, pdf_bytes as report_pdf_bytes
 from backend.app.services.ml_registry import validate_dataset, artifact_metadata, _safe_artifact, POINTER, MODEL_ROOT
+from backend.app.workers import tasks as worker_tasks
 from cryptography import x509
 
 router = APIRouter()
@@ -739,6 +740,13 @@ def add_message_review_feedback(review_id: int, payload: dict, principal: Princi
     if label not in REVIEW_LABELS: raise HTTPException(400, "label must be MALICIOUS, BENIGN, or INCONCLUSIVE")
     actor = principal.external_subject or principal.user_id; evidence = str(payload.get("evidence") or "")[:8000]; db.add(MessageReviewFeedback(review_id=review.id, reviewer_id=actor, label=label, certainty=str(payload.get("certainty") or "")[:30] or None, evidence=evidence or None, approval_status="PENDING_VALIDATION")); db.add(MessageReviewAudit(review_id=review.id, reviewer_id=actor, action="feedback_submitted", note="Feedback queued for dataset validation")); db.commit(); return {"review_id": review.id, "label": label, "approval_status": "PENDING_VALIDATION"}
 
+@router.post("/admin/message-reviews/feedback/{feedback_id}/approve")
+def approve_message_review_feedback(feedback_id: int, principal: Principal = Depends(get_current_principal), _: None = Depends(admin_only), db: Session = Depends(get_db)):
+    feedback=db.get(MessageReviewFeedback,feedback_id)
+    if not feedback: raise HTTPException(404,"Feedback not found")
+    if feedback.approval_status != "PENDING_VALIDATION": raise HTTPException(409,"Feedback is already finalized")
+    feedback.approval_status="APPROVED"; actor=principal.external_subject or principal.user_id; db.add(MessageReviewAudit(review_id=feedback.review_id,reviewer_id=actor,action="feedback_approved",note="Feedback approved for future training")); db.commit(); return {"feedback_id":feedback.id,"approval_status":feedback.approval_status}
+
 @router.get("/ml/status")
 def model_status():
     return ml_status()
@@ -751,13 +759,31 @@ def ml_registry(principal: Principal = Depends(get_current_principal), _: None =
     runs=db.query(MLTrainingRun).order_by(MLTrainingRun.created_at.desc()).limit(100).all()
     return {"production": ml_status(), "datasets":[{"id":x.id,"dataset_id":x.dataset_id,"version":x.version,"source":x.source,"checksum":x.checksum,"record_count":x.record_count,"class_distribution":json.loads(x.class_distribution_json or "{}"),"quality":json.loads(x.quality_json or "{}"),"preprocessing_version":x.preprocessing_version,"validation_status":x.validation_status,"approval_status":x.approval_status,"created_at":x.created_at} for x in datasets], "models":[{"id":x.id,"model_id":x.model_id,"version":x.version,"name":x.name,"algorithm":x.algorithm,"dataset_version_id":x.dataset_version_id,"artifact_location":x.artifact_location,"artifact_checksum":x.artifact_checksum,"metrics":json.loads(x.metrics_json or "{}"),"status":x.status,"approval_by":x.approval_by,"approved_at":x.approved_at,"created_at":x.created_at} for x in models], "deployments":[{"id":x.id,"model_version_id":x.model_version_id,"previous_model_version_id":x.previous_model_version_id,"action":x.action,"actor":x.actor,"created_at":x.created_at,"reason":x.reason} for x in deployments], "training_runs":[{"id":x.id,"dataset_version_id":x.dataset_version_id,"model_version_id":x.model_version_id,"status":x.status,"metrics":json.loads(x.metrics_json or "{}"),"error":x.error,"created_at":x.created_at} for x in runs]}
 
+@router.post("/ml/retraining")
+def start_ml_retraining(payload: dict, background_tasks: BackgroundTasks, principal: Principal = Depends(get_current_principal), _: None = Depends(admin_only), db: Session = Depends(get_db)):
+    dataset_id=int(payload.get("dataset_version_id") or 0); dataset=db.get(MLDatasetVersion,dataset_id)
+    if not dataset: raise HTTPException(404,"Dataset version not found")
+    if dataset.approval_status != "APPROVED" or dataset.validation_status != "VALID": raise HTTPException(409,"Only approved and valid datasets may be trained")
+    active=db.query(MLTrainingRun).filter(MLTrainingRun.status.in_(["PENDING","RUNNING"])).first()
+    if active: raise HTTPException(409,"A retraining job is already active")
+    actor=principal.external_subject or principal.user_id; run=MLTrainingRun(dataset_version_id=dataset.id,status="PENDING",created_by=actor); db.add(run); db.flush(); task_id="ml-retrain-"+secrets.token_hex(12); db.add(BackgroundTaskRun(task_id=task_id,task_name="retrain_model",status="PENDING")); db.commit(); db.refresh(run)
+    if worker_tasks.celery_app: worker_tasks.retrain_model.delay(task_id,run.id)
+    else: background_tasks.add_task(worker_tasks.retrain_model,task_id,run.id)
+    return {"task_id":task_id,"training_run_id":run.id,"status":"PENDING","dataset_version_id":dataset.id}
+
+@router.get("/ml/training/{training_run_id}")
+def ml_training_status(training_run_id: int, principal: Principal = Depends(get_current_principal), _: None = Depends(admin_only), db: Session = Depends(get_db)):
+    run=db.get(MLTrainingRun,training_run_id)
+    if not run: raise HTTPException(404,"Training run not found")
+    return {"id":run.id,"dataset_version_id":run.dataset_version_id,"model_version_id":run.model_version_id,"status":run.status,"metrics":json.loads(run.metrics_json or "{}"),"error":run.error,"started_at":run.started_at,"completed_at":run.completed_at}
+
 @router.post("/ml/datasets/register")
 def register_ml_dataset(payload: dict, principal: Principal = Depends(get_current_principal), _: None = Depends(admin_only), db: Session = Depends(get_db)):
     try: quality=validate_dataset(str(payload.get("path") or ""), int(payload.get("max_rows") or 500000))
     except (ValueError, FileNotFoundError) as exc: raise HTTPException(400, str(exc)) from exc
     dataset_id=str(payload.get("dataset_id") or Path(quality["path"]).stem)[:160]; version=str(payload.get("version") or "v1")[:80]; actor=principal.external_subject or principal.user_id
     if db.query(MLDatasetVersion).filter(MLDatasetVersion.dataset_id == dataset_id, MLDatasetVersion.version == version).first(): raise HTTPException(409, "Dataset version already registered")
-    row=MLDatasetVersion(dataset_id=dataset_id,version=version,source=str(payload.get("source") or quality["path"])[:2000],checksum=quality["checksum"],record_count=quality["record_count"],class_distribution_json=json.dumps(quality["class_distribution"]),quality_json=json.dumps(quality["quality"]),preprocessing_version=str(payload.get("preprocessing_version") or "message-text-v1"),validation_status=quality["validation_status"],approval_status="PENDING",created_by=actor); db.add(row); db.commit(); db.refresh(row); return {"id":row.id,"dataset_id":dataset_id,"version":version,"validation_status":row.validation_status,"approval_status":row.approval_status,"quality":quality}
+    row=MLDatasetVersion(dataset_id=dataset_id,version=version,source=quality["path"][:2000],checksum=quality["checksum"],record_count=quality["record_count"],class_distribution_json=json.dumps(quality["class_distribution"]),quality_json=json.dumps(quality["quality"]),preprocessing_version=str(payload.get("preprocessing_version") or "message-text-v1"),validation_status=quality["validation_status"],approval_status="PENDING",created_by=actor); db.add(row); db.commit(); db.refresh(row); return {"id":row.id,"dataset_id":dataset_id,"version":version,"validation_status":row.validation_status,"approval_status":row.approval_status,"quality":quality}
 
 @router.post("/ml/datasets/{dataset_id}/approve")
 def approve_ml_dataset(dataset_id: int, principal: Principal = Depends(get_current_principal), _: None = Depends(admin_only), db: Session = Depends(get_db)):

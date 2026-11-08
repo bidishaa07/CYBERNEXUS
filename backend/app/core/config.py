@@ -24,6 +24,11 @@ class Settings(BaseSettings):
     celery_broker_url: str = ""
     celery_result_backend: str = ""
     celery_task_timeout_seconds: int = 120
+    ml_retraining_schedule: str = ""
+    ml_retraining_dataset_id: int = 0
+    ml_training_max_rows: int = 100000
+    ml_min_f1: float = 0.0
+    ml_max_false_negative_rate: float = 1.0
     google_safe_browsing_api_key: str = ""
     google_cloud_project_id: str = ""
     virustotal_api_key: str = ""

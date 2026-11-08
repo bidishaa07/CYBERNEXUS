@@ -343,7 +343,7 @@ This checklist records repository implementation and observed runtime state. A c
 - [x] Phase 5 tests: report JSON/CSV/PDF, invalid format, ownership boundary, review workflow, audit history and feedback persistence: `2 passed`.
 - [x] Regression verification: backend `130 passed, 1 skipped`; frontend typecheck/build passed; Vitest component suite passes with Playwright excluded from the Vitest command.
 - [ ] A live OIDC admin identity and running browser E2E environment still need to be configured for live administrator/browser verification.
-- [ ] Phase 6 model version management and automated retraining have not started.
+- [x] Phase 6 model version management is implemented; automated retraining is tracked in the Phase 7 section below.
 
 ### Phase 6 - ML model registry and dataset version management
 
@@ -356,4 +356,19 @@ This checklist records repository implementation and observed runtime state. A c
 - [x] Added ML Model Management dashboard panel with production status, datasets, candidate approval, deployment and rollback actions.
 - [x] Verification: backend regression suite 130 passed, 1 skipped; ML registry tests added; frontend typecheck, component tests and production build pass.
 - [ ] Existing production artifact has no embedded dataset version, so it is reported as UNKNOWN until registered or retrained with explicit lifecycle metadata.
-- [ ] Phase 7 automated retraining, evaluation approval automation and deployment scheduling have not started.
+- [x] Phase 7 automated retraining, evaluation approval automation and deployment scheduling are implemented below; production worker configuration remains a deployment requirement.
+
+### Phase 7 - automated retraining, evaluation and final integration
+
+- [x] Added admin-triggered retraining through the existing background task/Celery architecture.
+- [x] Added persisted training-run status, duration timestamps, metrics and failure details.
+- [x] Retraining requires an approved, valid dataset and rechecks the dataset checksum before training.
+- [x] Added reproducible stratified train/validation/test splitting with an untouched test partition and deterministic random state.
+- [x] Added candidate training with the existing TF-IDF + Logistic Regression pipeline and resource-bounded row loading.
+- [x] Added candidate-vs-production comparison with false-positive rate, false-negative rate, ROC-AUC, PR-AUC, Brier score and configurable thresholds.
+- [x] Added explicit reviewer-feedback approval endpoint; only APPROVED feedback is added to the training partition.
+- [x] Added optional Celery Beat scheduling through ML_RETRAINING_SCHEDULE and ML_RETRAINING_DATASET_ID.
+- [x] Candidates remain unapproved and undeployed until the existing administrator approval/deployment flow is used.
+- [x] Added training-run display and start action to the ML Model Management panel.
+- [x] Verification: controlled retraining tests pass; full backend suite is 133 passed, 1 skipped; frontend typecheck, component tests and production build pass.
+- [ ] Production retraining still requires a configured Celery/Redis worker for durable asynchronous execution; development fallback uses FastAPI background tasks.

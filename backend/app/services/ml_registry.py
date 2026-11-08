@@ -50,7 +50,7 @@ def validate_dataset(path: str, max_rows: int = 500000) -> dict[str, Any]:
     total=max(rows,1); minority=min(labels.values()) if labels else 0; majority=max(labels.values()) if labels else 0
     quality={"rows_read": rows, "empty_content": empty, "malformed_records": malformed, "duplicate_records": duplicates, "inconsistent_duplicate_labels": inconsistent, "class_imbalance_ratio": round(minority / majority, 4) if majority else None, "leakage_warning": duplicates > 0 or inconsistent > 0, "stratification_possible": len(labels) >= 2 and minority >= 2}
     validation="VALID" if rows and not empty and not malformed and not inconsistent and len(labels) >= 2 else "INVALID"
-    try: display_path = str(file_path.relative_to(ROOT))
+    try: display_path = str(file_path.relative_to(DATASET_ROOT))
     except ValueError: display_path = file_path.name
     return {"path": display_path, "checksum": checksum, "record_count": rows, "class_distribution": dict(labels), "quality": quality, "validation_status": validation}
 

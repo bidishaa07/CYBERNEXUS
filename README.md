@@ -243,6 +243,17 @@ Phase 6 preserves the existing TF-IDF + Logistic Regression classifier while add
 - The active model loader uses a validated models/production_pointer.json when present and otherwise preserves the existing models/phishing_message_model.joblib path. Historical message records retain their model version metadata.
 - The dashboard includes an ML Model Management panel showing the active model, dataset versions, metrics, approval status, deployments and rollback controls.
 
+## Phase 7 automated retraining and final integration
+
+- Retraining is available through admin-only POST /api/ml/retraining and persists MLTrainingRun plus BackgroundTaskRun status.
+- Jobs require a VALID and APPROVED dataset, verify its checksum before training, use deterministic stratified train/validation/test splits, and keep the test split untouched.
+- Approved human feedback can be explicitly approved through the administrator workflow and is added only to the training partition; pending/unapproved feedback is never used.
+- Candidate artifacts are evaluated against the active production artifact on the same test split, including false-positive/false-negative rates, ROC-AUC, PR-AUC and calibration Brier score. Failed thresholds create REJECTED/EVALUATION_FAILED results.
+- Candidates are never auto-approved or auto-deployed. Existing model approval, checksum verification, deployment and rollback endpoints remain the only promotion path.
+- Optional Celery Beat scheduling is configured with ML_RETRAINING_SCHEDULE and ML_RETRAINING_DATASET_ID. Without a broker, development uses the existing FastAPI background-task path.
+- The ML management panel shows training runs and permits an administrator to start retraining from approved datasets.
+- Verification: controlled retraining and registry tests pass; full backend suite is 133 passed, 1 skipped; frontend typecheck, component tests and production build pass. Browser E2E remains a separate command requiring a running browser fixture.
+
 ## Structure
 
 `frontend/` Vite/React dashboard · `backend/` FastAPI API, engines, persistence, and migrations · `engines/` model/detection modules · `dataset/` local training data · `tests/` automated backend tests · `docs/` architecture notes · `infrastructure/` deployment notes.
