@@ -242,6 +242,7 @@ Phase 6 preserves the existing TF-IDF + Logistic Regression classifier while add
 - Admin APIs under /api/ml/ support registry inspection, dataset registration/approval, model registration/approval, controlled deployment and rollback. Only approved artifacts with unchanged checksums may be deployed.
 - The active model loader uses a validated models/production_pointer.json when present and otherwise preserves the existing models/phishing_message_model.joblib path. Historical message records retain their model version metadata.
 - The dashboard includes an ML Model Management panel showing the active model, dataset versions, metrics, approval status, deployments and rollback controls.
+- A separate ML Lifecycle Status panel shows live deployed model/dataset provenance, evaluation metrics, API/database health, cache state and the database-backed retraining runtime.
 
 ## Phase 7 automated retraining and final integration
 

@@ -8,6 +8,7 @@ import AuthPanel from './components/AuthPanel';
 import AdminReviewPanel from './components/AdminReviewPanel';
 import MessageReportsPanel from './components/MessageReportsPanel';
 import MLModelManagementPanel from './components/MLModelManagementPanel';
+import MLLifecycleStatusPanel from './components/MLLifecycleStatusPanel';
 import '../app/globals.css';
 
-createRoot(document.getElementById('root')!).render(<StrictMode><Home /><EmailSecurityPanel /><ContactIntelligencePanel /><MessageHistoryPanel /><MessageReportsPanel /><AdminReviewPanel /><MLModelManagementPanel /><AuthPanel /></StrictMode>);
+createRoot(document.getElementById('root')!).render(<StrictMode><Home /><EmailSecurityPanel /><ContactIntelligencePanel /><MessageHistoryPanel /><MessageReportsPanel /><MLLifecycleStatusPanel /><AdminReviewPanel /><MLModelManagementPanel /><AuthPanel /></StrictMode>);
