@@ -20,7 +20,7 @@ export default function EmailSecurityPanel() {
   const dkim = result?.dkim_verification || result?.trusted_authentication?.dkim || [];
   const trusted = result?.trusted_authentication;
   return <section className="fixed bottom-4 right-4 z-40 w-[min(92vw,560px)] rounded-2xl border border-cyan/30 bg-panel p-5 shadow-2xl shadow-black/50">
-    <div className="flex items-center gap-3"><MailCheck className="text-cyan"/><div><h2 className="font-semibold">Email Security Analysis</h2><p className="text-xs text-slate-400">Upload an RFC-compliant .eml file for sender, header and authentication analysis.</p></div></div>
+    <div className="flex items-center gap-3"><MailCheck className="text-cyan"/><div><div className="text-[10px] uppercase tracking-[.2em] text-cyan">Dedicated email trust panel</div><h2 className="font-semibold">Email Security Analysis</h2><p className="text-xs text-slate-400">Sender headers, independent DKIM, trusted-context SPF, and DMARC alignment.</p></div></div>
     <label className="mt-4 flex cursor-pointer items-center justify-center gap-2 rounded-xl border border-dashed border-cyan/40 bg-cyan/5 p-3 text-sm text-cyan"><Upload size={16}/>{busy ? 'Analyzing email…' : 'Choose .eml file'}<input type="file" accept=".eml,message/rfc822" onChange={handleUpload} className="hidden"/></label>
     <p className="mt-2 text-[11px] text-slate-500">Maximum 10 MB. Attachments are metadata-only; scripts and external resources are not executed or downloaded.</p>
     {error && <p className="mt-3 text-xs text-red-300">{error}</p>}
