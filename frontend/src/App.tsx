@@ -1,15 +1,20 @@
-import { useEffect, useState } from "react";
+import { useEffect, useState, type CSSProperties } from "react";
 import {
   Activity,
+  ArrowUpRight,
   BarChart3,
+  ChevronDown,
   FileText,
+  Globe2,
   History,
   MailCheck,
+  Menu,
   MessageSquare,
   Network,
   Radar,
   ShieldCheck,
   Users,
+  X,
 } from "lucide-react";
 import { api } from "../lib/api";
 import DomainIntelligenceDashboard from "./components/DomainIntelligenceDashboard";
@@ -37,8 +42,13 @@ const nav = [
   ["Community intel", Users],
   ["Threat correlation", Network],
 ] as const;
+const serviceNav = nav.slice(1, 9);
 export default function App() {
   const [tab, setTab] = useState("Overview");
+  const [theme, setTheme] = useState<"dark" | "light">(() =>
+    window.localStorage.getItem("cybernexus-theme") === "light" ? "light" : "dark",
+  );
+  const [servicesOpen, setServicesOpen] = useState(false);
   const [url, setUrl] = useState("");
   const [result, setResult] = useState<any>();
   const [history, setHistory] = useState<any[]>([]);
@@ -48,6 +58,17 @@ export default function App() {
     api("/scans")
       .then(setHistory)
       .catch(() => {});
+  }, []);
+  useEffect(() => {
+    document.body.classList.toggle("cybernexus-light", theme === "light");
+    return () => document.body.classList.remove("cybernexus-light");
+  }, [theme]);
+  useEffect(() => {
+    const close = () => setServicesOpen(false);
+    const escape = (event: KeyboardEvent) => event.key === "Escape" && close();
+    window.addEventListener("click", close);
+    window.addEventListener("keydown", escape);
+    return () => { window.removeEventListener("click", close); window.removeEventListener("keydown", escape); };
   }, []);
   async function scan(e: any) {
     e.preventDefault();
@@ -67,8 +88,14 @@ export default function App() {
       setBusy(false);
     }
   }
+  function toggleTheme() {
+    const next = theme === "dark" ? "light" : "dark";
+    setTheme(next);
+    window.localStorage.setItem("cybernexus-theme", next);
+  }
   return (
-    <main className="min-h-screen grid-bg">
+    <main className={`min-h-screen grid-bg cinematic-app ${theme === "light" ? "light-app" : "dark-app"}`}>
+      <div className="cinematic-video" aria-hidden="true"><video autoPlay muted loop playsInline preload="auto" src="https://d8j0ntlcm91z4.cloudfront.net/user_38xzZboKViGWJOttwIXH07lWA1P/hf_20260809_132544_b6ef0174-ed95-45ad-9a2f-ccb8acfbdce8.mp4" /><video className="cinematic-video-lift" autoPlay muted loop playsInline preload="auto" src="https://d8j0ntlcm91z4.cloudfront.net/user_38xzZboKViGWJOttwIXH07lWA1P/hf_20260809_132544_b6ef0174-ed95-45ad-9a2f-ccb8acfbdce8.mp4" /></div>
       <div className="mx-auto flex max-w-[1500px]">
         <aside className="hidden min-h-screen w-64 shrink-0 border-r border-line bg-panel/70 p-6 lg:block">
           <div className="mb-12 flex items-center gap-3">
@@ -82,29 +109,25 @@ export default function App() {
               </div>
             </div>
           </div>
-          {nav.map(([name, Icon]) => (
-            <button
-              key={name}
-              onClick={() => setTab(name)}
-              className={`mb-1 flex w-full items-center gap-3 rounded-xl px-3 py-3 text-left text-sm ${tab === name ? "bg-cyan/10 text-cyan" : "text-slate-400"}`}
-            >
-              <Icon size={17} />
-              {name}
-            </button>
-          ))}
+          <div className="cinematic-nav-row">
+            <button type="button" onClick={() => setTab("Overview")} className={`top-nav-link ${tab === "Overview" ? "active" : ""}`}>Overview</button>
+            <div className={`services-menu ${servicesOpen ? "open" : ""} ${serviceNav.some(([name]) => name === tab) ? "active" : ""}`} onClick={(event) => event.stopPropagation()}><button type="button" className="services-select" onClick={() => setServicesOpen((open) => !open)} aria-expanded={servicesOpen} aria-haspopup="menu"><span>Services</span><ChevronDown size={14} /></button>{servicesOpen && <div className="services-dropdown" role="menu">{serviceNav.map(([name]) => <button type="button" role="menuitem" key={name} className={tab === name ? "selected" : ""} onClick={() => { setTab(name); setServicesOpen(false); }}>{name}</button>)}</div>}</div>
+            <button type="button" onClick={() => setTab("Community intel")} className={`top-nav-link ${tab === "Community intel" ? "active" : ""}`}>Community intel</button>
+            <button type="button" onClick={() => setTab("Threat correlation")} className={`top-nav-link ${tab === "Threat correlation" ? "active" : ""}`}>Threat correlation</button>
+          </div>
           <div className="mt-12 rounded-2xl border border-line p-4 text-xs text-slate-400">
             <Activity size={14} className="mb-2 text-cyan" />
             Passive analysis systems operational.
+            <button type="button" onClick={toggleTheme} className="theme-toggle mt-3" role="switch" aria-checked={theme === "light"} aria-label="Toggle light and dark mode"><span className="theme-toggle-track"><span className="theme-toggle-thumb" /></span><span>{theme === "dark" ? "Dark mode" : "Light mode"}</span></button>
           </div>
         </aside>
         <section className="min-w-0 flex-1 p-5 md:p-8">
-          <header className="mb-9">
-            <div className="mb-2 text-xs uppercase tracking-[.2em] text-cyan">
-              Security operations
-            </div>
+          {tab !== "Overview" && <header className="mb-9">
+            <div className="mb-2 text-xs uppercase tracking-[.2em] text-cyan">Security operations</div>
             <h1 className="text-3xl font-semibold">{tab}</h1>
-          </header>
-          {(tab === "Overview" || tab === "Threat scanner") && (
+          </header>}
+          {tab === "Overview" && <OverviewLanding history={history} result={result} url={url} setUrl={setUrl} scan={scan} busy={busy} error={error} setTab={setTab} />}
+          {tab === "Threat scanner" && (
             <>
               <div className="glass mb-7 rounded-3xl p-6">
                 <h2 className="mb-2 text-lg">Scan a website</h2>
@@ -161,6 +184,35 @@ export default function App() {
       </div>
     </main>
   );
+}
+
+function OverviewLanding({ history, result, url, setUrl, scan, busy, error, setTab }: any) {
+  const latest = result || history[0];
+  const score = Number(latest?.risk?.score ?? latest?.risk_score ?? 0);
+  const highRisk = history.filter((x: any) => ["High", "Critical"].includes(x.risk_level || x.risk?.level)).length;
+  const validTls = history.filter((x: any) => x.network?.tls?.status === "valid").length;
+  const tlsPercent = history.length ? Math.round((validTls / history.length) * 100) : 0;
+  const levels = ["Low", "Medium", "High", "Critical"].map((level) => ({ level, count: history.filter((x: any) => (x.risk_level || x.risk?.level) === level).length }));
+  const maxLevel = Math.max(1, ...levels.map((x) => x.count));
+  const go = (next: string) => () => setTab(next);
+  return <div className="overview-landing">
+    <section className="overview-hero">
+      <div><div className="overview-eyebrow">DIGITAL TRUST INTELLIGENCE / LIVE OVERVIEW</div><h2>Security built into<br /><span>every system layer</span></h2><p>See risk signals, certificate trust, threat relationships, and investigation activity in one operational view.</p></div>
+      <form onSubmit={scan} className="overview-scan"><label>Start a live trust scan</label><div><Globe2 size={17} /><input required value={url} onChange={(e) => setUrl(e.target.value)} placeholder="https://example.com" /><button aria-label="Run trust scan" disabled={busy}>{busy ? "Scanning" : "Scan"}<ArrowUpRight size={16} /></button></div>{error && <small>{error}</small>}</form>
+    </section>
+    <section className="overview-metrics">
+      <button type="button" className="overview-card score-card overview-card-button" onClick={go("Threat scanner")}><div className="overview-card-title">Real-time security score <ArrowUpRight size={14} /></div><div className="score-gauge" style={{ "--score": `${score * 3.6}deg` } as CSSProperties}><div><strong>{score}</strong><span>/100</span></div></div><div className="score-state">{latest ? (latest.risk?.level || latest.risk_level || "Analyzed") : "Awaiting scan"}</div><small>Open threat scanner</small></button>
+      <button type="button" className="overview-card certificate-card overview-card-button" onClick={go("Threat scanner")}><div className="overview-card-title">Digital certificate validity <ArrowUpRight size={14} /></div><div className="chart-legend"><span><i className="legend-cyan" /> Valid coverage</span><b>{tlsPercent}%</b></div><div className="certificate-bars">{(history.slice(0, 6).length ? history.slice(0, 6) : [{ domain: "No scans yet" }]).map((item: any, index: number) => { const valid = item.network?.tls?.status === "valid"; const width = history.length ? Math.max(18, valid ? 86 - index * 7 : 36) : 12; return <div className="certificate-row" key={item.id || index}><span>{item.domain || "Awaiting scan"}</span><div><i style={{ width: `${width}%` }} /></div><time>{valid ? "VALID" : item.domain ? "REVIEW" : "—"}</time></div>; })}</div></button>
+      <button type="button" className="overview-card events-card overview-card-button" onClick={go("Scan history")}><div className="overview-card-title">Recent security events <span>LIVE</span><ArrowUpRight size={14} /></div>{(history.slice(0, 4).length ? history.slice(0, 4) : [{ domain: "Workspace initialized", created_at: new Date().toISOString(), risk_level: "LOW" }]).map((item: any, index: number) => <div className="event-row" key={item.id || index}><span className={`event-icon event-${String(item.risk_level || item.risk?.level || "low").toLowerCase()}`}><ShieldCheck size={13} /></span><div><b>{item.domain || "Security event"}</b><small>{item.risk_level || item.risk?.level || "System ready"} · {item.created_at ? new Date(item.created_at).toLocaleDateString() : "Now"}</small></div></div>)}</button>
+    </section>
+    <section className="overview-lower">
+      <button type="button" className="overview-card phishing-card overview-card-button" onClick={go("Threat scanner")}><div className="overview-card-title">Phishing detection metrics <span className="filter-label">ALL SCANS <ChevronDown size={13} /></span></div><div className="metric-chart">{levels.map((item, index) => <div className="metric-column" key={item.level}><div className={`metric-bar metric-${index}`} style={{ height: `${Math.max(10, (item.count / maxLevel) * 100)}%` }} /><span>{item.level}</span><b>{item.count}</b></div>)}</div><div className="chart-foot"><span>Open threat scanner</span><strong>{highRisk} high-risk finding{highRisk === 1 ? "" : "s"}</strong></div></button>
+      <button type="button" className="overview-card graph-card overview-card-button" onClick={go("Threat correlation")}><div className="overview-card-title">Threat aggregator nodes <span className="filter-label">LIVE GRAPH</span><ArrowUpRight size={14} /></div><div className="node-graph"><svg className="node-graph-svg" viewBox="0 0 620 220" role="img" aria-label="Threat aggregator relationship graph"><defs><filter id="node-glow"><feGaussianBlur stdDeviation="5" result="blur" /><feMerge><feMergeNode in="blur" /><feMergeNode in="SourceGraphic" /></feMerge></filter><linearGradient id="link-gradient" x1="0" x2="1"><stop offset="0" stopColor="#c81b1c" stopOpacity=".82" /><stop offset="1" stopColor="#aaa" stopOpacity=".28" /></linearGradient></defs><g className="graph-links" stroke="url(#link-gradient)" strokeWidth="2"><line x1="310" y1="110" x2="145" y2="42" /><line x1="310" y1="110" x2="478" y2="54" /><line x1="310" y1="110" x2="102" y2="164" /><line x1="310" y1="110" x2="486" y2="164" /><line x1="310" y1="110" x2="76" y2="99" /></g><g className="graph-nodes" textAnchor="middle" dominantBaseline="middle"><g className="graph-node-svg-item"><circle cx="145" cy="42" r="24" /><text x="145" y="42">DNS</text></g><g className="graph-node-svg-item"><circle cx="478" cy="54" r="24" /><text x="478" y="54">TLS</text></g><g className="graph-node-svg-item"><circle cx="102" cy="164" r="24" /><text x="102" y="164">IP</text></g><g className="graph-node-svg-item"><circle cx="486" cy="164" r="24" /><text x="486" y="164">URL</text></g><g className="graph-node-svg-item"><circle cx="76" cy="99" r="24" /><text x="76" y="99">ML</text></g><g className="graph-node-svg-center" filter="url(#node-glow)"><circle cx="310" cy="110" r="35" /><text x="310" y="108">{history.length}</text><text x="310" y="126" className="graph-node-unit">SCANS</text></g></g></svg><div className="graph-caption"><b>{history.length ? `${history.length} scan nodes` : "Ready for scan data"}</b><small>Open threat correlation</small></div></div></button>
+      <button type="button" className="overview-card activity-card overview-card-button" onClick={go("Website security")}><div className="overview-card-title">Workspace telemetry <span>24H</span><ArrowUpRight size={14} /></div><div className="activity-ring"><div><strong>{history.length}</strong><small>scans</small></div></div><div className="activity-list"><span><i className="dot-red" />High risk <b>{highRisk}</b></span><span><i className="dot-cyan" />TLS valid <b>{validTls}</b></span><span><i className="dot-white" />Modules <b>8</b></span></div></button>
+    </section>
+    <InfrastructureHealthPanel />
+    {result && <ScanResult data={result} />}
+  </div>;
 }
 function Module4Panel() {
   return (
