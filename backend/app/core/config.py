@@ -41,6 +41,8 @@ class Settings(BaseSettings):
     llm_secondary_timeout_seconds: float = 30
     llm_secondary_privacy_authorized: bool = False
     llm_primary_privacy_authorized: bool = True
+    smtp_context_shared_secret: str = ""
+    smtp_context_max_age_seconds: int = 86400
     ipinfo_token: str = ""
     ip_intelligence_provider: str = "freeipapi"
     freeipapi_base_url: str = "https://freeipapi.com/api/json/"

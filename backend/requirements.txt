@@ -13,3 +13,5 @@ scikit-learn==1.6.1
 joblib==1.4.2
 Pillow==11.1.0
 pytest==8.3.4
+dkimpy==1.1.8
+pyspf==2.0.14

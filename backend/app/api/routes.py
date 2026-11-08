@@ -1,9 +1,11 @@
+import hashlib
 import json
+import secrets
 from datetime import datetime, timezone
 from fastapi import APIRouter, Depends, HTTPException, Header, UploadFile, File, BackgroundTasks
 from sqlalchemy.orm import Session
 from backend.app.db.session import get_db, SessionLocal
-from backend.app.models.models import Scan, CommunityReport, DomainIntelligence, ProviderVerdict, ThreatIndicator, RedirectHop, BrandRegistry, BrandVerificationEvidence, BrandVerificationChallenge, BrandVerificationAudit, BrandLogoAsset, BrandImageReference, WebsiteImageCandidate, ImageComparison, CertificateRecord, CertificateChainLink, CertificateValidationResult, CertificateRevocationResult, CertificateRevocationJob, CertificateTransparencyEntry, CertificateTransparencyAnomaly, CertificateRiskAssessment, EmailAnalysis, EmailHeader, EmailAuthenticationResult, EmailHeaderAnomaly
+from backend.app.models.models import Scan, CommunityReport, DomainIntelligence, ProviderVerdict, ThreatIndicator, RedirectHop, BrandRegistry, BrandVerificationEvidence, BrandVerificationChallenge, BrandVerificationAudit, BrandLogoAsset, BrandImageReference, WebsiteImageCandidate, ImageComparison, CertificateRecord, CertificateChainLink, CertificateValidationResult, CertificateRevocationResult, CertificateRevocationJob, CertificateTransparencyEntry, CertificateTransparencyAnomaly, CertificateRiskAssessment, EmailAnalysis, EmailHeader, EmailAuthenticationResult, EmailHeaderAnomaly, EmailRawMessage, EmailSmtpContext, EmailVerificationRun
 from backend.app.schemas.schemas import ScanRequest, ReportRequest
 from backend.app.services.scanner import scan
 from backend.app.services.scanner import _destination_providers
@@ -16,7 +18,7 @@ from backend.app.engines.logo_similarity import fingerprint, compare, MAX_IMAGE_
 from backend.app.engines.logo_similarity import compare_fingerprints
 from backend.app.engines.brand_verification import create_challenge, verify as verify_brand_challenge
 from backend.app.engines.message import analyze_message
-from backend.app.engines.email_analysis import analyze_email, MAX_EMAIL_BYTES
+from backend.app.engines.email_analysis import analyze_email, MAX_EMAIL_BYTES, verify_dkim_signatures, evaluate_spf_context, evaluate_dmarc_alignment
 from backend.app.engines.correlation import correlate
 from backend.app.engines.commitments import commitment
 from backend.app.engines.ml import status as ml_status
@@ -420,13 +422,51 @@ async def email_message_analysis(file: UploadFile = File(...), db: Session = Dep
         result = analyze_email(raw, filename, file.content_type or "")
     except ValueError as exc:
         raise HTTPException(400, str(exc)) from exc
+    dkim_results = verify_dkim_signatures(raw)
+    result["dkim_verification"] = dkim_results
+    for item in result.get("authentication", []):
+        if item.get("mechanism") == "DKIM": item["independent_verification"] = dkim_results
     sender = result.get("sender", {})
     row = EmailAnalysis(filename=filename, content_type=file.content_type or "", size_bytes=len(raw), message_id=sender.get("message_id"), sender=sender.get("from"), subject=sender.get("subject"), analysis_status=result.get("status", "COMPLETED"), result_json=json.dumps(result))
-    db.add(row); db.flush()
+    db.add(row); db.flush(); db.add(EmailRawMessage(analysis_id=row.id, raw_bytes=raw, sha256=hashlib.sha256(raw).hexdigest()))
     for item in result.get("headers", []): db.add(EmailHeader(analysis_id=row.id, header_name=item["name"], header_value=item["value"], normalized_value=item.get("normalized"), position=item.get("position", 0)))
     for item in result.get("authentication", []): db.add(EmailAuthenticationResult(analysis_id=row.id, mechanism=item["mechanism"], status=item["status"], domain=item.get("domain"), selector=item.get("selector"), source=item.get("source"), evidence_json=json.dumps(item.get("evidence", {})), checked_at=datetime.now(timezone.utc)))
     for item in result.get("anomalies", []): db.add(EmailHeaderAnomaly(analysis_id=row.id, anomaly_type=item["type"], severity=item["severity"], evidence=item["evidence"], created_at=datetime.now(timezone.utc)))
+    db.add(EmailVerificationRun(analysis_id=row.id, verification_type="DKIM", result_json=json.dumps({"signatures": dkim_results}), source="independent cryptographic verification"))
     db.commit(); result["analysis_id"] = row.id
+    return result
+
+@router.post("/message-analysis/email/{analysis_id}/smtp-context")
+def ingest_smtp_context(analysis_id: int, payload: dict, x_smtp_context_token: str | None = Header(default=None), db: Session = Depends(get_db)):
+    if not settings.smtp_context_shared_secret or not x_smtp_context_token or not secrets.compare_digest(x_smtp_context_token, settings.smtp_context_shared_secret):
+        raise HTTPException(403, "Authenticated SMTP context is required")
+    row = db.get(EmailAnalysis, analysis_id)
+    raw_row = db.query(EmailRawMessage).filter(EmailRawMessage.analysis_id == analysis_id).first()
+    if not row or not raw_row: raise HTTPException(404, "Email analysis not found")
+    required = [payload.get(key) for key in ("smtp_client_ip", "envelope_mail_from", "helo_hostname", "receiving_server", "message_id", "trusted_source", "received_at")]
+    if not all(isinstance(value, str) and value.strip() for value in required): raise HTTPException(400, "All trusted SMTP context fields are required")
+    result = json.loads(row.result_json); expected_message_id = result.get("sender", {}).get("message_id", "")
+    if payload["message_id"] != expected_message_id: raise HTTPException(400, "SMTP context does not match the uploaded Message-ID")
+    try: received_at = datetime.fromisoformat(payload["received_at"].replace("Z", "+00:00"))
+    except ValueError: raise HTTPException(400, "received_at must be an ISO timestamp")
+    if received_at.tzinfo is None: received_at = received_at.replace(tzinfo=timezone.utc)
+    age_seconds = (datetime.now(timezone.utc) - received_at).total_seconds()
+    if age_seconds < -300 or age_seconds > settings.smtp_context_max_age_seconds: raise HTTPException(400, "SMTP context timestamp is outside the accepted age window")
+    context = {**payload, "received_at": received_at.isoformat()}
+    spf_result = evaluate_spf_context(context, result.get("sender", {}).get("from_domain"), [])
+    dmarc_domain = result.get("sender", {}).get("from_domain")
+    dmarc_records = []
+    if dmarc_domain:
+        from backend.app.engines.email_analysis import _dns_txt
+        _, dmarc_records, _ = _dns_txt(f"_dmarc.{dmarc_domain}")
+    dkim_results = result.get("dkim_verification", [])
+    dmarc_result = evaluate_dmarc_alignment(dmarc_domain, spf_result, dkim_results, dmarc_records)
+    verification = {"smtp_context": context, "spf": spf_result, "dkim": dkim_results, "dmarc": dmarc_result, "checked_at": datetime.now(timezone.utc).isoformat()}
+    result["trusted_authentication"] = verification; row.result_json = json.dumps(result)
+    db.add(EmailSmtpContext(analysis_id=analysis_id, smtp_client_ip=context["smtp_client_ip"], envelope_mail_from=context["envelope_mail_from"], helo_hostname=context["helo_hostname"], receiving_server=context["receiving_server"], message_id=context["message_id"], trusted_source=context["trusted_source"], received_at=received_at))
+    for mechanism, value in (("SPF", spf_result), ("DKIM", {"signatures": dkim_results}), ("DMARC", dmarc_result)):
+        db.add(EmailVerificationRun(analysis_id=analysis_id, verification_type=mechanism, result_json=json.dumps(value), source=context["trusted_source"]))
+    db.commit(); result["analysis_id"] = analysis_id
     return result
 
 @router.get("/message-analysis/email/{analysis_id}")

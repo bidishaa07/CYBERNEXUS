@@ -127,3 +127,15 @@ class EmailAuthenticationResult(Base):
 class EmailHeaderAnomaly(Base):
     __tablename__ = "email_header_anomalies"
     id=Column(Integer,primary_key=True); analysis_id=Column(Integer,ForeignKey("email_analyses.id"),index=True,nullable=False); anomaly_type=Column(String(80),nullable=False); severity=Column(String(20),nullable=False); evidence=Column(Text,nullable=False); created_at=Column(DateTime,default=lambda:datetime.now(timezone.utc))
+
+class EmailRawMessage(Base):
+    __tablename__ = "email_raw_messages"
+    id=Column(Integer,primary_key=True); analysis_id=Column(Integer,ForeignKey("email_analyses.id"),unique=True,index=True,nullable=False); raw_bytes=Column(LargeBinary,nullable=False); sha256=Column(String(64),nullable=False); created_at=Column(DateTime,default=lambda:datetime.now(timezone.utc))
+
+class EmailSmtpContext(Base):
+    __tablename__ = "email_smtp_contexts"
+    id=Column(Integer,primary_key=True); analysis_id=Column(Integer,ForeignKey("email_analyses.id"),index=True,nullable=False); smtp_client_ip=Column(String(64),nullable=False); envelope_mail_from=Column(String(512),nullable=False); helo_hostname=Column(String(255),nullable=False); receiving_server=Column(String(255),nullable=False); message_id=Column(String(512),nullable=False); trusted_source=Column(String(255),nullable=False); received_at=Column(DateTime,nullable=False); created_at=Column(DateTime,default=lambda:datetime.now(timezone.utc))
+
+class EmailVerificationRun(Base):
+    __tablename__ = "email_verification_runs"
+    id=Column(Integer,primary_key=True); analysis_id=Column(Integer,ForeignKey("email_analyses.id"),index=True,nullable=False); verification_type=Column(String(30),nullable=False); result_json=Column(Text,nullable=False); source=Column(String(255),nullable=False); created_at=Column(DateTime,default=lambda:datetime.now(timezone.utc))

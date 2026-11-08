@@ -50,3 +50,49 @@ def test_oversized_email_rejected():
 def test_invalid_email_rejected():
     with pytest.raises(ValueError, match="invalid_email"):
         email_analysis.analyze_email(b"not a structured message")
+
+
+def test_dkim_without_signature_is_none():
+    result = email_analysis.verify_dkim_signatures(b"From: sender@example.com\n\nhello")
+    assert result[0]["status"] == "NONE"
+
+
+def test_dkim_verification_uses_independent_verifier(monkeypatch):
+    class FakeDkim:
+        def __init__(self, raw):
+            assert raw.endswith(b"preserved-bytes")
+
+        def verify(self, index, dnsfunc):
+            assert index == 0
+            assert dnsfunc(b"s1._domainkey.example.com") == b"v=DKIM1; k=rsa; p=public-key"
+            return True
+
+    monkeypatch.setattr(email_analysis, "dkim", type("DkimModule", (), {"DKIM": FakeDkim, "DKIMException": Exception}))
+    monkeypatch.setattr(email_analysis, "_dkim_dns", lambda name: b"v=DKIM1; k=rsa; p=public-key")
+    raw = b"DKIM-Signature: v=1; a=rsa-sha256; d=example.com; s=s1\nFrom: sender@example.com\n\npreserved-bytes"
+    result = email_analysis.verify_dkim_signatures(raw)
+    assert result[0]["status"] == "PASS"
+    assert result[0]["public_key_status"] == "FOUND"
+
+
+def test_spf_requires_trusted_smtp_context():
+    result = email_analysis.evaluate_spf_context({}, "example.com")
+    assert result["status"] == "UNKNOWN"
+
+
+def test_spf_evaluates_mailfrom_and_helo_separately(monkeypatch):
+    class SPFModule:
+        @staticmethod
+        def check2(ip, sender, helo, **kwargs):
+            return ("pass", "fixture pass")
+
+    monkeypatch.setattr(email_analysis, "spf", SPFModule)
+    result = email_analysis.evaluate_spf_context({"smtp_client_ip": "203.0.113.10", "envelope_mail_from": "bounce@example.com", "helo_hostname": "mail.example.com", "receiving_server": "mx.example.net", "trusted_source": "fixture"}, "example.com")
+    assert result["status"] == "PASS"
+    assert result["mail_from"]["status"] == "PASS"
+    assert result["helo"]["status"] == "PASS"
+
+
+def test_dmarc_alignment_requires_authenticated_identity():
+    result = email_analysis.evaluate_dmarc_alignment("example.com", {"mail_from": {"status": "UNKNOWN"}}, [{"status": "UNKNOWN", "signing_domain": "example.net"}], ["v=DMARC1; p=reject; adkim=s; aspf=s"])
+    assert result["status"] == "UNKNOWN"

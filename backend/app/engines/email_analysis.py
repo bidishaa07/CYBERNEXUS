@@ -1,4 +1,6 @@
 """Conservative RFC email parsing and sender/authentication analysis."""
+import hashlib
+import ipaddress
 import re
 from datetime import datetime, timezone
 from email import policy
@@ -7,6 +9,14 @@ from email.utils import parseaddr, parsedate_to_datetime
 from typing import Any
 
 import dns.resolver
+try:
+    import dkim
+except ImportError:  # pragma: no cover - dependency is pinned in requirements
+    dkim = None
+try:
+    import spf
+except ImportError:  # pragma: no cover - dependency is pinned in requirements
+    spf = None
 
 MAX_EMAIL_BYTES = 10 * 1024 * 1024
 SUPPORTED_TYPES = {"message/rfc822", "application/octet-stream", "text/plain", ""}
@@ -34,6 +44,88 @@ def _dns_txt(name: str) -> tuple[str, list[str], str | None]:
         return "NOT_FOUND", [], None
     except Exception as exc:
         return "UNAVAILABLE", [], type(exc).__name__
+
+def _dkim_dns(name: bytes, timeout: int = 5) -> bytes:
+    status, records, error = _dns_txt(name.decode(errors="replace").rstrip("."))
+    if status == "UNAVAILABLE": raise TimeoutError(error or "dns_unavailable")
+    if status == "NOT_FOUND" or not records: raise KeyError("dkim_public_key_missing")
+    record = "".join(records)
+    key_type = re.search(r"(?:^|;)\s*k=([^;\s]+)", record, re.I)
+    public_key = re.search(r"(?:^|;)\s*p=([^;\s]*)", record, re.I)
+    if not public_key or not public_key.group(1): raise ValueError("dkim_public_key_empty")
+    if key_type and key_type.group(1).lower() not in {"rsa", "ed25519"}: raise ValueError("dkim_key_type_unsupported")
+    return record.encode()
+
+def verify_dkim_signatures(raw: bytes) -> list[dict[str, Any]]:
+    """Verify every DKIM signature against the preserved RFC5322 bytes."""
+    message = BytesParser(policy=policy.default).parsebytes(raw)
+    signatures = [str(value) for name, value in message.raw_items() if name.lower() == "dkim-signature"]
+    results = []
+    for index, signature in enumerate(signatures):
+        def tag(name: str) -> str | None:
+            match = re.search(rf"(?:^|;)\s*{name}=([^;\s]+)", signature, re.I)
+            return match.group(1) if match else None
+        signing_domain = tag("d"); selector = tag("s"); algorithm = tag("a"); canonicalization = tag("c") or "simple/simple"
+        item = {"signature_index": index, "signing_domain": signing_domain, "selector": selector, "algorithm": algorithm, "canonicalization": canonicalization, "status": "UNKNOWN", "public_key_status": "UNKNOWN", "body_hash_status": "UNKNOWN", "header_signature_status": "UNKNOWN", "source": "independent cryptographic verification"}
+        if not signing_domain or not selector:
+            item.update(status="PERMERROR", public_key_status="PERMERROR", error="DKIM signature is missing signing domain or selector")
+            results.append(item); continue
+        if dkim is None:
+            item.update(status="UNAVAILABLE", error="dkimpy is not installed")
+            results.append(item); continue
+        try:
+            key = _dkim_dns(f"{selector}._domainkey.{signing_domain}".encode())
+            item["public_key_status"] = "FOUND"
+            verifier = dkim.DKIM(raw)
+            verified = bool(verifier.verify(index, dnsfunc=_dkim_dns))
+            item["body_hash_status"] = "PASS" if verified else "FAIL"
+            item["header_signature_status"] = "PASS" if verified else "FAIL"
+            item["status"] = "PASS" if verified else "FAIL"
+            item["public_key_sha256"] = hashlib.sha256(key).hexdigest()
+        except (KeyError, dkim.DKIMException if dkim else Exception) as exc:
+            name = type(exc).__name__
+            item["status"] = "TEMPERROR" if isinstance(exc, (TimeoutError,)) else "PERMERROR" if name in {"KeyError", "KeyFormatError", "AuthresError"} else "FAIL"
+            item["error"] = "DKIM verification failed: " + name
+        except Exception as exc:
+            item["status"] = "TEMPERROR" if isinstance(exc, (TimeoutError, OSError)) else "FAIL"
+            item["error"] = "DKIM verification failed: " + type(exc).__name__
+        results.append(item)
+    return results or [{"signature_index": 0, "status": "NONE", "source": "independent cryptographic verification", "error": "No DKIM-Signature header was present"}]
+
+def _aligned(identity: str | None, visible: str | None, mode: str) -> bool:
+    if not identity or not visible: return False
+    identity = identity.lower().rstrip("."); visible = visible.lower().rstrip(".")
+    return identity == visible if mode == "s" else identity == visible or identity.endswith("." + visible) or visible.endswith("." + identity)
+
+def evaluate_spf_context(context: dict[str, Any], visible_from_domain: str | None, dmarc_records: list[str] | None = None) -> dict[str, Any]:
+    """Evaluate MAIL FROM and HELO only with authenticated gateway context."""
+    required = (context.get("smtp_client_ip"), context.get("envelope_mail_from"), context.get("helo_hostname"))
+    if not all(isinstance(value, str) and value.strip() for value in required):
+        return {"status": "UNKNOWN", "source": context.get("trusted_source", "unknown"), "error": "Trusted SMTP client IP, envelope sender, and HELO are required"}
+    try: ipaddress.ip_address(context["smtp_client_ip"])
+    except ValueError: return {"status": "PERMERROR", "error": "Invalid authenticated SMTP client IP"}
+    if spf is None: return {"status": "UNAVAILABLE", "error": "pyspf is not installed"}
+    result: dict[str, Any] = {"source": context.get("trusted_source"), "smtp_client_ip": context["smtp_client_ip"], "envelope_mail_from": context["envelope_mail_from"], "helo_hostname": context["helo_hostname"]}
+    try:
+        mail_status, mail_explanation = spf.check2(context["smtp_client_ip"], context["envelope_mail_from"], context["helo_hostname"], receiver=context.get("receiving_server", "trusted-gateway"), timeout=5)
+        helo_status, helo_explanation = spf.check2(context["smtp_client_ip"], "postmaster@" + context["helo_hostname"], context["helo_hostname"], receiver=context.get("receiving_server", "trusted-gateway"), timeout=5)
+        result["mail_from"] = {"status": str(mail_status).upper(), "explanation": mail_explanation}
+        result["helo"] = {"status": str(helo_status).upper(), "explanation": helo_explanation}
+        result["status"] = result["mail_from"]["status"]
+    except Exception as exc:
+        result.update(status="TEMPERROR", error=type(exc).__name__)
+    return result
+
+def evaluate_dmarc_alignment(visible_from_domain: str | None, spf_result: dict[str, Any], dkim_results: list[dict[str, Any]], records: list[str]) -> dict[str, Any]:
+    policy_record = next((record for record in records if record.lower().startswith("v=dmarc1")), None)
+    if not visible_from_domain or not policy_record: return {"status": "UNKNOWN", "policy": policy_record, "error": "Visible From domain or DMARC policy is unavailable"}
+    tags = {key.lower(): value for key, value in re.findall(r"\b([a-z]+)=([^;\s]+)", policy_record, re.I)}
+    mode_spf = "s" if tags.get("aspf", "r").lower() == "s" else "r"; mode_dkim = "s" if tags.get("adkim", "r").lower() == "s" else "r"
+    spf_identity = spf_result.get("envelope_mail_from", "").split("@", 1)[-1] if spf_result.get("envelope_mail_from") else None
+    spf_pass = spf_result.get("mail_from", {}).get("status") == "PASS" and _aligned(spf_identity, visible_from_domain, mode_spf)
+    dkim_pass = any(item.get("status") == "PASS" and _aligned(item.get("signing_domain"), visible_from_domain, mode_dkim) for item in dkim_results)
+    status = "PASS" if spf_pass or dkim_pass else "FAIL" if spf_result.get("mail_from", {}).get("status") in {"PASS", "FAIL", "SOFTFAIL", "NEUTRAL"} or any(item.get("status") in {"PASS", "FAIL"} for item in dkim_results) else "UNKNOWN"
+    return {"status": status, "policy": tags, "alignment": {"spf": spf_pass, "dkim": dkim_pass, "spf_mode": mode_spf, "dkim_mode": mode_dkim}, "source": "independent alignment evaluation"}
 
 def _parse_received(value: str) -> dict[str, Any]:
     return {"raw": value, "has_from": bool(re.search(r"\bfrom\b", value, re.I)), "has_by": bool(re.search(r"\bby\b", value, re.I)), "has_date": ";" in value}
