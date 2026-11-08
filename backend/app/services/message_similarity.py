@@ -171,8 +171,12 @@ def correlate_messages(db, *, threshold=None, max_pairs=None):
     threshold = settings.message_similarity_threshold if threshold is None else threshold
     max_pairs = settings.message_similarity_max_pairs if max_pairs is None else max_pairs
     results = []
-    for index, left in enumerate(snapshots):
-        for right in snapshots[index + 1:]:
+    # Evaluate the newest observations first. This keeps incremental scans
+    # useful when the bounded result budget is already occupied by older
+    # historical pairs.
+    for index, left in enumerate(reversed(snapshots)):
+        remaining = snapshots[:len(snapshots) - index - 1]
+        for right in reversed(remaining):
             if len(results) >= max_pairs:
                 break
             features = _features(left, right); score, matches = _score(features)

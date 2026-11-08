@@ -670,8 +670,8 @@ def create_scan(payload: ScanRequest, principal: Principal = Depends(get_current
     return {"id": row.id, **result, "created_at": row.created_at}
 
 @router.get("/scans")
-def history(limit: int = 20, db: Session = Depends(get_db)):
-    return [{"id": x.id, "url": x.url, "domain": x.domain, "risk_score": x.risk_score, "risk_level": x.risk_level, "created_at": x.created_at} for x in db.query(Scan).order_by(Scan.created_at.desc()).limit(min(limit, 100)).all()]
+def history(limit: int = Query(1000, ge=1, le=1000), db: Session = Depends(get_db)):
+    return [{"id": x.id, "url": x.url, "domain": x.domain, "risk_score": x.risk_score, "risk_level": x.risk_level, "created_at": x.created_at} for x in db.query(Scan).order_by(Scan.created_at.desc()).limit(limit).all()]
 
 @router.get("/scans/{scan_id}")
 def get_scan(scan_id: int, db: Session = Depends(get_db)):

@@ -1,5 +1,5 @@
 // The browser session uses HttpOnly cookies; credentials are never stored in JS storage.
-const API = import.meta.env.VITE_API_URL || 'http://127.0.0.1:8001/api';
+const API = import.meta.env.VITE_API_URL || 'http://127.0.0.1:8000/api';
 export async function api(path: string, options?: RequestInit) {
   const res = await fetch(`${API}${path}`, { ...options, credentials: 'include', headers: { 'Content-Type': 'application/json', ...(options?.headers || {}) } });
   if (!res.ok) { let detail = `Request failed (${res.status})`; try { const body = await res.json(); detail = body.detail || detail; } catch {} throw new Error(detail); }
