@@ -151,3 +151,11 @@ class MessageIndicatorResult(Base):
 class MessageDomainSpoofingFinding(Base):
     __tablename__ = "message_domain_spoofing_findings"
     id=Column(Integer,primary_key=True); message_analysis_id=Column(Integer,ForeignKey("message_analysis_records.id"),index=True); email_analysis_id=Column(Integer,ForeignKey("email_analyses.id"),index=True); observed_domain=Column(String(255),nullable=False); official_domain=Column(String(255)); brand=Column(String(120)); similarity=Column(Float); edit_distance=Column(Integer); technique=Column(String(120)); confidence=Column(String(30)); verification_status=Column(String(30)); evidence_json=Column(Text,nullable=False); created_at=Column(DateTime,default=lambda:datetime.now(timezone.utc))
+
+class EmailProviderRegistry(Base):
+    __tablename__ = "email_provider_registry"
+    id=Column(Integer,primary_key=True); domain=Column(String(255),unique=True,index=True,nullable=False); provider_name=Column(String(120),nullable=False); category=Column(String(40),nullable=False); disposable=Column(String(10),default="false"); source=Column(String(255),nullable=False); list_version=Column(String(80)); updated_at=Column(DateTime,default=lambda:datetime.now(timezone.utc))
+
+class ContactRiskAssessment(Base):
+    __tablename__ = "contact_risk_assessments"
+    id=Column(Integer,primary_key=True); message_analysis_id=Column(Integer,ForeignKey("message_analysis_records.id"),index=True); email_analysis_id=Column(Integer,ForeignKey("email_analyses.id"),index=True); indicator_type=Column(String(30),nullable=False); indicator=Column(String(2048),nullable=False); score=Column(Integer,nullable=False); classification=Column(String(30),nullable=False); confidence=Column(String(30),nullable=False); evidence_json=Column(Text,nullable=False); checked_at=Column(DateTime,default=lambda:datetime.now(timezone.utc))

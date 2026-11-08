@@ -270,3 +270,19 @@ This checklist records repository implementation and observed runtime state. A c
 - [ ] Resolve Kimi HTTP 429 quota/rate-limit state.
 - [ ] Configure PhishTank only if a genuine endpoint/key is available.
 - [ ] Use PostgreSQL, a job queue, rate limiting, secret management, and HTTPS for production deployment.
+
+### Phone abuse and email reputation upgrade
+
+- [x] Added libphonenumber-backed international phone parsing, including E.164, national/international formats, country code, region, carrier and number type.
+- [x] Added a configurable phone reputation adapter with backend-only credentials, timeout/error states, bounded retry with jitter, in-memory TTL caching and no-provider UNKNOWN behavior.
+- [x] Added transparent phone risk scoring; validity alone never produces a SAFE or malicious verdict.
+- [x] Added SQLAlchemy model and migration `015_contact_intelligence.sql` for provider registry and persisted contact risk assessments.
+- [x] Seeded a traceable registry for Gmail, Outlook, Hotmail, Yahoo, iCloud, Proton, Zoho and selected disposable providers; disposable status is not treated as confirmed fraud.
+- [x] Added configurable `DISPOSABLE_EMAIL_DOMAINS` additions and database-backed provider classification.
+- [x] Added email domain MX, SPF and DMARC presence checks plus existing threat-provider correlation for extracted email indicators.
+- [x] Added contact evidence to the existing text and `.eml` analysis persistence pipeline and dedicated email-security panel.
+- [x] Added tests for Indian/international numbers, invalid numbers, provider timeout, abuse result, legitimate free providers, disposable providers, malicious domain evidence and unknown providers.
+- [x] Verification: focused contact/message tests `11 passed`; full backend suite `120 passed, 1 skipped`; frontend typecheck and production build passed.
+- [ ] A concrete phone-abuse provider URL/key is not configured in the current environment; live abuse reputation remains UNKNOWN until `PHONE_REPUTATION_API_URL` and its credential are supplied.
+- [ ] SPF/DKIM/DMARC checks remain evidence-aware: uploaded messages without trusted SMTP context or independent DKIM evidence remain UNKNOWN.
+- [ ] The current architecture uses SQLAlchemy migrations and an in-memory cache; PostgreSQL/Redis/background refresh remain production deployment work.

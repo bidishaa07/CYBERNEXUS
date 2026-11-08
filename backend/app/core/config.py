@@ -43,6 +43,12 @@ class Settings(BaseSettings):
     llm_primary_privacy_authorized: bool = True
     smtp_context_shared_secret: str = ""
     smtp_context_max_age_seconds: int = 86400
+    phone_reputation_api_url: str = ""
+    phone_reputation_api_key: str = ""
+    phone_reputation_auth_header: str = "Authorization"
+    phone_reputation_timeout_seconds: float = 6
+    phone_reputation_cache_ttl_seconds: int = 900
+    disposable_email_domains: str = ""
     ipinfo_token: str = ""
     ip_intelligence_provider: str = "freeipapi"
     freeipapi_base_url: str = "https://freeipapi.com/api/json/"

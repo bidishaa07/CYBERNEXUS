@@ -14,6 +14,7 @@ except ImportError:  # pragma: no cover
 from backend.app.engines.domain_intelligence import analyze_domain, registered_domain
 from backend.app.engines.threats import check as check_url
 from backend.app.engines.url_utils import normalize_url
+from backend.app.engines.contact_intelligence import phone_analysis, email_analysis
 
 def _now(): return datetime.now(timezone.utc).isoformat()
 
@@ -37,15 +38,9 @@ def _brand_findings(domain, brands):
             yield finding
 
 def _phone(value):
-    base = {"indicator": value, "provider": "libphonenumber", "checked_at": _now(), "status": "UNKNOWN", "verdict": "unknown", "evidence": {"source": "local numbering metadata"}}
-    if not phonenumbers: return {**base, "status": "UNAVAILABLE", "error": "phone metadata library unavailable"}
-    try:
-        parsed = phonenumbers.parse(value, None)
-        valid = phonenumbers.is_valid_number(parsed)
-        return {**base, "status": "COMPLETED", "verdict": "unknown", "normalized": phonenumbers.format_number(parsed, phonenumbers.PhoneNumberFormat.E164), "country_code": parsed.country_code, "region": geocoder.description_for_number(parsed, "en"), "carrier": carrier.name_for_number(parsed, "en"), "valid": valid, "evidence": {"source": "libphonenumber", "format_valid": phonenumbers.is_possible_number(parsed)}}
-    except Exception as exc: return {**base, "status": "COMPLETED", "verdict": "unknown", "valid": False, "error": type(exc).__name__}
+    return phone_analysis(value)
 
-def analyze_indicators(indicators, sender=None, brands=None):
+def analyze_indicators(indicators, sender=None, brands=None, email_providers=None):
     sender = sender or {}; urls=[]; emails=[]; phones=[]; spoofing=[]
     for raw in dict.fromkeys(indicators.get("urls", [])):
         try:
@@ -55,7 +50,8 @@ def analyze_indicators(indicators, sender=None, brands=None):
     for raw in dict.fromkeys(indicators.get("emails", [])):
         domain = _domain_from_email(raw); item={"indicator": raw, "domain": domain, "status": "UNKNOWN", "verdict": "unknown", "checked_at": _now(), "evidence": {}}
         if domain:
-            item["registered_domain"] = registered_domain(domain); item["domain_intelligence"] = analyze_domain(domain); item["status"] = "COMPLETED"
+            item.update(email_analysis(raw, email_providers)); item["status"] = "COMPLETED"
+            item["domain_intelligence"] = analyze_domain(domain)
             try:
                 domain_lookup = check_url("https://" + domain)
                 item["provider_results"] = domain_lookup.get("providers", [])

@@ -151,6 +151,29 @@ CERTIFICATE_RISK_WEIGHTS_JSON={}
 
 Scanning is passive. Requests have timeouts and response limits, redirects are revalidated, and downloaded scripts are never executed. Public VirusTotal use and Google Safe Browsing use must follow the providers' terms; commercial deployments may require Google Web Risk or a suitable commercial VirusTotal agreement. Historical WHOIS data, ownership, brand truth, and a clean provider result are not fabricated or inferred beyond available evidence.
 
+## Phone and email contact intelligence
+
+Message analysis now enriches extracted phone numbers and email addresses with evidence-backed contact intelligence:
+
+- Phone numbers are parsed with `libphonenumber` and return country, formats, carrier/type metadata and validity separately from abuse reputation.
+- Phone abuse reputation is an optional backend-only adapter configured with `PHONE_REPUTATION_API_URL`, `PHONE_REPUTATION_API_KEY`, and related timeout/cache settings. Missing or failed provider lookups remain `UNKNOWN`.
+- Email domains are classified from the persisted provider registry. Legitimate free providers are neutral/low-risk, disposable providers are identified as disposable rather than malicious, and elevated risk requires actual threat-intelligence evidence.
+- Email indicators receive MX, SPF and DMARC presence checks and are correlated with the configured URL/domain threat providers without sending full message content.
+- Contact assessments are persisted in `contact_risk_assessments`; the provider registry is initialized by migration `015_contact_intelligence.sql`.
+
+Configuration:
+
+```env
+PHONE_REPUTATION_API_URL=
+PHONE_REPUTATION_API_KEY=
+PHONE_REPUTATION_AUTH_HEADER=Authorization
+PHONE_REPUTATION_TIMEOUT_SECONDS=6
+PHONE_REPUTATION_CACHE_TTL_SECONDS=900
+DISPOSABLE_EMAIL_DOMAINS=
+```
+
+The current test baseline is `120 passed, 1 skipped` for the backend suite. Frontend TypeScript checking and the Vite production build also pass. A live phone-abuse provider result is not claimed until a compatible provider endpoint and credential are configured.
+
 ## Structure
 
 `frontend/` Vite/React dashboard · `backend/` FastAPI API, engines, persistence, and migrations · `engines/` model/detection modules · `dataset/` local training data · `tests/` automated backend tests · `docs/` architecture notes · `infrastructure/` deployment notes.
