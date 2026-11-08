@@ -139,3 +139,15 @@ class EmailSmtpContext(Base):
 class EmailVerificationRun(Base):
     __tablename__ = "email_verification_runs"
     id=Column(Integer,primary_key=True); analysis_id=Column(Integer,ForeignKey("email_analyses.id"),index=True,nullable=False); verification_type=Column(String(30),nullable=False); result_json=Column(Text,nullable=False); source=Column(String(255),nullable=False); created_at=Column(DateTime,default=lambda:datetime.now(timezone.utc))
+
+class MessageAnalysisRecord(Base):
+    __tablename__ = "message_analysis_records"
+    id=Column(Integer,primary_key=True); input_sha256=Column(String(64),index=True,nullable=False); source_type=Column(String(30),nullable=False,default="TEXT"); result_json=Column(Text,nullable=False); created_at=Column(DateTime,default=lambda:datetime.now(timezone.utc))
+
+class MessageIndicatorResult(Base):
+    __tablename__ = "message_indicator_results"
+    id=Column(Integer,primary_key=True); message_analysis_id=Column(Integer,ForeignKey("message_analysis_records.id"),index=True); email_analysis_id=Column(Integer,ForeignKey("email_analyses.id"),index=True); indicator_type=Column(String(30),nullable=False); indicator=Column(String(2048),nullable=False); provider=Column(String(120),nullable=False); status=Column(String(30),nullable=False); verdict=Column(String(30),nullable=False); result_json=Column(Text,nullable=False); checked_at=Column(DateTime,default=lambda:datetime.now(timezone.utc))
+
+class MessageDomainSpoofingFinding(Base):
+    __tablename__ = "message_domain_spoofing_findings"
+    id=Column(Integer,primary_key=True); message_analysis_id=Column(Integer,ForeignKey("message_analysis_records.id"),index=True); email_analysis_id=Column(Integer,ForeignKey("email_analyses.id"),index=True); observed_domain=Column(String(255),nullable=False); official_domain=Column(String(255)); brand=Column(String(120)); similarity=Column(Float); edit_distance=Column(Integer); technique=Column(String(120)); confidence=Column(String(30)); verification_status=Column(String(30)); evidence_json=Column(Text,nullable=False); created_at=Column(DateTime,default=lambda:datetime.now(timezone.utc))

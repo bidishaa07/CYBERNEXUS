@@ -5,7 +5,7 @@ from datetime import datetime, timezone
 from fastapi import APIRouter, Depends, HTTPException, Header, UploadFile, File, BackgroundTasks
 from sqlalchemy.orm import Session
 from backend.app.db.session import get_db, SessionLocal
-from backend.app.models.models import Scan, CommunityReport, DomainIntelligence, ProviderVerdict, ThreatIndicator, RedirectHop, BrandRegistry, BrandVerificationEvidence, BrandVerificationChallenge, BrandVerificationAudit, BrandLogoAsset, BrandImageReference, WebsiteImageCandidate, ImageComparison, CertificateRecord, CertificateChainLink, CertificateValidationResult, CertificateRevocationResult, CertificateRevocationJob, CertificateTransparencyEntry, CertificateTransparencyAnomaly, CertificateRiskAssessment, EmailAnalysis, EmailHeader, EmailAuthenticationResult, EmailHeaderAnomaly, EmailRawMessage, EmailSmtpContext, EmailVerificationRun
+from backend.app.models.models import Scan, CommunityReport, DomainIntelligence, ProviderVerdict, ThreatIndicator, RedirectHop, BrandRegistry, BrandVerificationEvidence, BrandVerificationChallenge, BrandVerificationAudit, BrandLogoAsset, BrandImageReference, WebsiteImageCandidate, ImageComparison, CertificateRecord, CertificateChainLink, CertificateValidationResult, CertificateRevocationResult, CertificateRevocationJob, CertificateTransparencyEntry, CertificateTransparencyAnomaly, CertificateRiskAssessment, EmailAnalysis, EmailHeader, EmailAuthenticationResult, EmailHeaderAnomaly, EmailRawMessage, EmailSmtpContext, EmailVerificationRun, MessageAnalysisRecord, MessageIndicatorResult, MessageDomainSpoofingFinding
 from backend.app.schemas.schemas import ScanRequest, ReportRequest
 from backend.app.services.scanner import scan
 from backend.app.services.scanner import _destination_providers
@@ -19,6 +19,7 @@ from backend.app.engines.logo_similarity import compare_fingerprints
 from backend.app.engines.brand_verification import create_challenge, verify as verify_brand_challenge
 from backend.app.engines.message import analyze_message
 from backend.app.engines.email_analysis import analyze_email, MAX_EMAIL_BYTES, verify_dkim_signatures, evaluate_spf_context, evaluate_dmarc_alignment
+from backend.app.engines.message_intelligence import analyze_indicators
 from backend.app.engines.correlation import correlate
 from backend.app.engines.commitments import commitment
 from backend.app.engines.ml import status as ml_status
@@ -405,10 +406,20 @@ def reports(db: Session = Depends(get_db)):
     return db.query(CommunityReport).order_by(CommunityReport.created_at.desc()).limit(50).all()
 
 @router.post("/message-analysis")
-def message_analysis(payload: dict):
+def message_analysis(payload: dict, db: Session = Depends(get_db)):
     text = payload.get("text", "")
     if not isinstance(text, str) or not 1 <= len(text) <= 20000: raise HTTPException(400, "text must contain 1-20000 characters")
-    return analyze_message(text)
+    brands=[{"brand_name": row.brand_name, "official_domain": row.official_domain, "verification_status": row.verification_status} for row in db.query(BrandRegistry).all()]
+    result=analyze_message(text, brands=brands)
+    record=MessageAnalysisRecord(input_sha256=hashlib.sha256(text.encode()).hexdigest(), source_type="TEXT", result_json=json.dumps(result)); db.add(record); db.flush()
+    intel=result.get("indicator_intelligence", {})
+    for indicator_type in ("urls", "emails", "phones"):
+        for item in intel.get(indicator_type, []):
+            for provider in item.get("provider_results", []) or [{"provider": item.get("provider", "local"), "status": item.get("status", "UNKNOWN"), "verdict": item.get("verdict", "unknown")}]:
+                db.add(MessageIndicatorResult(message_analysis_id=record.id, indicator_type=indicator_type[:-1], indicator=item.get("indicator", ""), provider=provider.get("provider", "unknown"), status=provider.get("status", "UNKNOWN"), verdict=provider.get("verdict", "unknown"), result_json=json.dumps(provider)))
+    for finding in intel.get("domain_spoofing", []): db.add(MessageDomainSpoofingFinding(message_analysis_id=record.id, observed_domain=finding.get("observed_domain", ""), official_domain=finding.get("official_domain"), brand=finding.get("brand"), similarity=finding.get("similarity"), edit_distance=finding.get("edit_distance"), technique=finding.get("technique", "unknown"), confidence=finding.get("confidence", "unknown"), verification_status=finding.get("verification_status", "unknown"), evidence_json=json.dumps(finding)))
+    db.commit(); result["analysis_id"] = record.id
+    return result
 
 @router.post("/message-analysis/email")
 async def email_message_analysis(file: UploadFile = File(...), db: Session = Depends(get_db)):
@@ -427,11 +438,19 @@ async def email_message_analysis(file: UploadFile = File(...), db: Session = Dep
     for item in result.get("authentication", []):
         if item.get("mechanism") == "DKIM": item["independent_verification"] = dkim_results
     sender = result.get("sender", {})
+    brands=[{"brand_name": item.brand_name, "official_domain": item.official_domain, "verification_status": item.verification_status} for item in db.query(BrandRegistry).all()]
+    result["indicator_intelligence"] = analyze_indicators(result.get("indicators", {}), sender=sender, brands=brands)
     row = EmailAnalysis(filename=filename, content_type=file.content_type or "", size_bytes=len(raw), message_id=sender.get("message_id"), sender=sender.get("from"), subject=sender.get("subject"), analysis_status=result.get("status", "COMPLETED"), result_json=json.dumps(result))
     db.add(row); db.flush(); db.add(EmailRawMessage(analysis_id=row.id, raw_bytes=raw, sha256=hashlib.sha256(raw).hexdigest()))
     for item in result.get("headers", []): db.add(EmailHeader(analysis_id=row.id, header_name=item["name"], header_value=item["value"], normalized_value=item.get("normalized"), position=item.get("position", 0)))
     for item in result.get("authentication", []): db.add(EmailAuthenticationResult(analysis_id=row.id, mechanism=item["mechanism"], status=item["status"], domain=item.get("domain"), selector=item.get("selector"), source=item.get("source"), evidence_json=json.dumps(item.get("evidence", {})), checked_at=datetime.now(timezone.utc)))
     for item in result.get("anomalies", []): db.add(EmailHeaderAnomaly(analysis_id=row.id, anomaly_type=item["type"], severity=item["severity"], evidence=item["evidence"], created_at=datetime.now(timezone.utc)))
+    intel=result.get("indicator_intelligence", {})
+    for indicator_type in ("urls", "emails", "phones"):
+        for item in intel.get(indicator_type, []):
+            for provider in item.get("provider_results", []) or [{"provider": item.get("provider", "local"), "status": item.get("status", "UNKNOWN"), "verdict": item.get("verdict", "unknown")}]:
+                db.add(MessageIndicatorResult(email_analysis_id=row.id, indicator_type=indicator_type[:-1], indicator=item.get("indicator", ""), provider=provider.get("provider", "unknown"), status=provider.get("status", "UNKNOWN"), verdict=provider.get("verdict", "unknown"), result_json=json.dumps(provider)))
+    for finding in intel.get("domain_spoofing", []): db.add(MessageDomainSpoofingFinding(email_analysis_id=row.id, observed_domain=finding.get("observed_domain", ""), official_domain=finding.get("official_domain"), brand=finding.get("brand"), similarity=finding.get("similarity"), edit_distance=finding.get("edit_distance"), technique=finding.get("technique", "unknown"), confidence=finding.get("confidence", "unknown"), verification_status=finding.get("verification_status", "unknown"), evidence_json=json.dumps(finding)))
     db.add(EmailVerificationRun(analysis_id=row.id, verification_type="DKIM", result_json=json.dumps({"signatures": dkim_results}), source="independent cryptographic verification"))
     db.commit(); result["analysis_id"] = row.id
     return result
