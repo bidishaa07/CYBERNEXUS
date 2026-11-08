@@ -303,3 +303,15 @@ This checklist records repository implementation and observed runtime state. A c
 - [x] Verification: full backend suite `125 passed, 1 skipped`; frontend typecheck and production build passed.
 - [ ] A live IPQualityScore or equivalent phone provider is not configured; phone abuse verdicts remain UNKNOWN until a real endpoint/key is supplied.
 - [ ] Redis/Celery/PostgreSQL live service integration was not executed in this environment; Compose configuration is present but requires Docker and service credentials.
+
+### Phase 4 - persistent message analysis and history
+
+- [x] Added migration `017_message_history.sql` with metadata, protected text content and audit-event tables.
+- [x] Persisted owner, input type, sender/subject, risk, ML prediction/confidence, LLM status, model version, status and duplicate linkage for text and `.eml` analyses.
+- [x] Preserved original text content for authorized re-analysis and existing raw `.eml` preservation.
+- [x] Added paginated history search/filter endpoint with risk, type and provider filtering.
+- [x] Added ownership-protected report retrieval, deletion and re-analysis endpoints; re-analysis creates a new historical record.
+- [x] Added Message Analysis History frontend panel with search, pagination, model and provider status.
+- [x] Added deterministic API tests for persistence, detail retrieval, re-analysis and ownership isolation.
+- [x] Verification: full backend suite `126 passed, 1 skipped`; frontend typecheck and production build passed.
+- [ ] Full account/session authentication is not present in the existing application; `X-User-ID` is an ownership boundary pending integration with a real identity provider.

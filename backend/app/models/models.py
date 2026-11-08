@@ -167,3 +167,15 @@ class IntelligenceVerification(Base):
 class BackgroundTaskRun(Base):
     __tablename__ = "background_task_runs"
     id=Column(Integer,primary_key=True); task_id=Column(String(160),unique=True,index=True,nullable=False); task_name=Column(String(160),nullable=False); status=Column(String(30),nullable=False); result_json=Column(Text); error=Column(String(255)); started_at=Column(DateTime); completed_at=Column(DateTime); created_at=Column(DateTime,default=lambda:datetime.now(timezone.utc))
+
+class MessageAnalysisMetadata(Base):
+    __tablename__ = "message_analysis_metadata"
+    id=Column(Integer,primary_key=True); message_analysis_id=Column(Integer,ForeignKey("message_analysis_records.id"),unique=True,index=True); email_analysis_id=Column(Integer,ForeignKey("email_analyses.id"),unique=True,index=True); user_id=Column(String(160),nullable=False,index=True,default="anonymous"); input_type=Column(String(30),nullable=False); sender=Column(String(512)); subject=Column(Text); risk_score=Column(Integer); classification=Column(String(120)); ml_prediction=Column(Integer); ml_confidence=Column(Float); llm_status=Column(String(40)); model_version=Column(String(160)); analysis_status=Column(String(30),nullable=False,default="COMPLETED"); duplicate_of_id=Column(Integer); created_at=Column(DateTime,default=lambda:datetime.now(timezone.utc),index=True)
+
+class MessageContent(Base):
+    __tablename__ = "message_contents"
+    id=Column(Integer,primary_key=True); message_analysis_id=Column(Integer,ForeignKey("message_analysis_records.id"),unique=True,index=True); content_bytes=Column(LargeBinary,nullable=False); sha256=Column(String(64),nullable=False,index=True); content_type=Column(String(80),nullable=False); protected=Column(String(10),nullable=False,default="true"); created_at=Column(DateTime,default=lambda:datetime.now(timezone.utc))
+
+class MessageAnalysisEvent(Base):
+    __tablename__ = "message_analysis_events"
+    id=Column(Integer,primary_key=True); message_analysis_id=Column(Integer,ForeignKey("message_analysis_records.id"),index=True); email_analysis_id=Column(Integer,ForeignKey("email_analyses.id"),index=True); user_id=Column(String(160),nullable=False); event_type=Column(String(60),nullable=False); details_json=Column(Text,nullable=False,default="{}"); created_at=Column(DateTime,default=lambda:datetime.now(timezone.utc))

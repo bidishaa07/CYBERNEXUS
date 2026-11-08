@@ -3,10 +3,11 @@ import json
 import re
 import secrets
 from datetime import datetime, timezone
-from fastapi import APIRouter, Depends, HTTPException, Header, UploadFile, File, BackgroundTasks
+from fastapi import APIRouter, Depends, HTTPException, Header, UploadFile, File, BackgroundTasks, Query
+from sqlalchemy import or_
 from sqlalchemy.orm import Session
 from backend.app.db.session import get_db, SessionLocal
-from backend.app.models.models import Scan, CommunityReport, DomainIntelligence, ProviderVerdict, ThreatIndicator, RedirectHop, BrandRegistry, BrandVerificationEvidence, BrandVerificationChallenge, BrandVerificationAudit, BrandLogoAsset, BrandImageReference, WebsiteImageCandidate, ImageComparison, CertificateRecord, CertificateChainLink, CertificateValidationResult, CertificateRevocationResult, CertificateRevocationJob, CertificateTransparencyEntry, CertificateTransparencyAnomaly, CertificateRiskAssessment, EmailAnalysis, EmailHeader, EmailAuthenticationResult, EmailHeaderAnomaly, EmailRawMessage, EmailSmtpContext, EmailVerificationRun, MessageAnalysisRecord, MessageIndicatorResult, MessageDomainSpoofingFinding, EmailProviderRegistry, ContactRiskAssessment, IntelligenceVerification, BackgroundTaskRun
+from backend.app.models.models import Scan, CommunityReport, DomainIntelligence, ProviderVerdict, ThreatIndicator, RedirectHop, BrandRegistry, BrandVerificationEvidence, BrandVerificationChallenge, BrandVerificationAudit, BrandLogoAsset, BrandImageReference, WebsiteImageCandidate, ImageComparison, CertificateRecord, CertificateChainLink, CertificateValidationResult, CertificateRevocationResult, CertificateRevocationJob, CertificateTransparencyEntry, CertificateTransparencyAnomaly, CertificateRiskAssessment, EmailAnalysis, EmailHeader, EmailAuthenticationResult, EmailHeaderAnomaly, EmailRawMessage, EmailSmtpContext, EmailVerificationRun, MessageAnalysisRecord, MessageIndicatorResult, MessageDomainSpoofingFinding, EmailProviderRegistry, ContactRiskAssessment, IntelligenceVerification, BackgroundTaskRun, MessageAnalysisMetadata, MessageContent, MessageAnalysisEvent
 from backend.app.schemas.schemas import ScanRequest, ReportRequest
 from backend.app.services.scanner import scan
 from backend.app.services.scanner import _destination_providers
@@ -65,6 +66,19 @@ def _refresh_revocation_job(job_id: int, scan_id: int):
 
 def admin_only(x_admin_token: str | None = Header(default=None)):
     if x_admin_token != settings.admin_api_token: raise HTTPException(403, "Administrator token required")
+
+def _owner(x_user_id: str | None) -> str:
+    value = (x_user_id or "anonymous").strip()
+    return value[:160] if value else "anonymous"
+
+def _admin(x_admin_token: str | None) -> bool:
+    return bool(x_admin_token and x_admin_token == settings.admin_api_token)
+
+def _can_view(meta: MessageAnalysisMetadata, user_id: str, admin: bool) -> bool:
+    return admin or meta.user_id == user_id
+
+def _metadata_summary(meta: MessageAnalysisMetadata) -> dict:
+    return {"analysis_id": meta.message_analysis_id or meta.email_analysis_id, "kind": meta.input_type, "user_id": meta.user_id, "sender": meta.sender, "subject": meta.subject, "created_at": meta.created_at, "risk_score": meta.risk_score, "classification": meta.classification, "ml_prediction": meta.ml_prediction, "ml_confidence": meta.ml_confidence, "llm_status": meta.llm_status, "model_version": meta.model_version, "analysis_status": meta.analysis_status, "duplicate_of_id": meta.duplicate_of_id}
 
 @router.get("/health")
 def health():
@@ -450,13 +464,19 @@ def reports(db: Session = Depends(get_db)):
     return db.query(CommunityReport).order_by(CommunityReport.created_at.desc()).limit(50).all()
 
 @router.post("/message-analysis")
-def message_analysis(payload: dict, db: Session = Depends(get_db)):
+def message_analysis(payload: dict, x_user_id: str | None = Header(default=None), db: Session = Depends(get_db)):
     text = payload.get("text", "")
     if not isinstance(text, str) or not 1 <= len(text) <= 20000: raise HTTPException(400, "text must contain 1-20000 characters")
     brands=[{"brand_name": row.brand_name, "official_domain": row.official_domain, "verification_status": row.verification_status} for row in db.query(BrandRegistry).all()]
     email_providers=[{"domain": row.domain, "provider_name": row.provider_name, "category": row.category, "disposable": row.disposable, "source": row.source, "list_version": row.list_version} for row in db.query(EmailProviderRegistry).all()]
     result=analyze_message(text, brands=brands, email_providers=email_providers)
-    record=MessageAnalysisRecord(input_sha256=hashlib.sha256(text.encode()).hexdigest(), source_type="TEXT", result_json=json.dumps(result)); db.add(record); db.flush()
+    owner = _owner(x_user_id); digest = hashlib.sha256(text.encode()).hexdigest()
+    previous = db.query(MessageAnalysisMetadata).join(MessageAnalysisRecord, MessageAnalysisMetadata.message_analysis_id == MessageAnalysisRecord.id).filter(MessageAnalysisMetadata.user_id == owner, MessageAnalysisRecord.input_sha256 == digest).order_by(MessageAnalysisMetadata.created_at.desc()).first()
+    record=MessageAnalysisRecord(input_sha256=digest, source_type="TEXT", result_json=json.dumps(result)); db.add(record); db.flush()
+    ml = result.get("ml") or {}
+    db.add(MessageContent(message_analysis_id=record.id, content_bytes=text.encode(), sha256=digest, content_type="text/plain"))
+    db.add(MessageAnalysisMetadata(message_analysis_id=record.id, user_id=owner, input_type="TEXT", sender=None, subject=None, risk_score=result.get("score"), classification=result.get("classification"), ml_prediction=ml.get("prediction"), ml_confidence=ml.get("malicious_probability"), llm_status=(result.get("llm") or {}).get("status") or ("CONNECTED" if (result.get("llm") or {}).get("available") else "UNAVAILABLE"), model_version=ml.get("model") or "current", analysis_status="COMPLETED", duplicate_of_id=previous.message_analysis_id if previous else None))
+    db.add(MessageAnalysisEvent(message_analysis_id=record.id, user_id=owner, event_type="created", details_json=json.dumps({"input_type":"TEXT", "duplicate": bool(previous)})))
     intel=result.get("indicator_intelligence", {})
     for indicator_type in ("urls", "emails", "phones"):
         for item in intel.get(indicator_type, []):
@@ -469,7 +489,7 @@ def message_analysis(payload: dict, db: Session = Depends(get_db)):
     return result
 
 @router.post("/message-analysis/email")
-async def email_message_analysis(file: UploadFile = File(...), db: Session = Depends(get_db)):
+async def email_message_analysis(file: UploadFile = File(...), x_user_id: str | None = Header(default=None), db: Session = Depends(get_db)):
     filename = file.filename or "uploaded.eml"
     if not filename.lower().endswith(".eml"):
         raise HTTPException(400, "Only .eml files are supported")
@@ -488,8 +508,13 @@ async def email_message_analysis(file: UploadFile = File(...), db: Session = Dep
     brands=[{"brand_name": item.brand_name, "official_domain": item.official_domain, "verification_status": item.verification_status} for item in db.query(BrandRegistry).all()]
     email_providers=[{"domain": item.domain, "provider_name": item.provider_name, "category": item.category, "disposable": item.disposable, "source": item.source, "list_version": item.list_version} for item in db.query(EmailProviderRegistry).all()]
     result["indicator_intelligence"] = analyze_indicators(result.get("indicators", {}), sender=sender, brands=brands, email_providers=email_providers)
+    owner = _owner(x_user_id); digest = hashlib.sha256(raw).hexdigest()
+    previous = db.query(MessageAnalysisMetadata).join(EmailAnalysis, MessageAnalysisMetadata.email_analysis_id == EmailAnalysis.id).filter(MessageAnalysisMetadata.user_id == owner, EmailAnalysis.id.in_(db.query(EmailRawMessage.analysis_id).filter(EmailRawMessage.sha256 == digest))).order_by(MessageAnalysisMetadata.created_at.desc()).first()
     row = EmailAnalysis(filename=filename, content_type=file.content_type or "", size_bytes=len(raw), message_id=sender.get("message_id"), sender=sender.get("from"), subject=sender.get("subject"), analysis_status=result.get("status", "COMPLETED"), result_json=json.dumps(result))
     db.add(row); db.flush(); db.add(EmailRawMessage(analysis_id=row.id, raw_bytes=raw, sha256=hashlib.sha256(raw).hexdigest()))
+    ml = result.get("ml") or {}
+    db.add(MessageAnalysisMetadata(email_analysis_id=row.id, user_id=owner, input_type="EML", sender=sender.get("from"), subject=sender.get("subject"), risk_score=result.get("score"), classification=result.get("classification"), ml_prediction=ml.get("prediction"), ml_confidence=ml.get("malicious_probability"), llm_status=(result.get("llm") or {}).get("status") or "UNAVAILABLE", model_version=ml.get("model") or "current", analysis_status=result.get("status", "COMPLETED"), duplicate_of_id=previous.email_analysis_id if previous else None))
+    db.add(MessageAnalysisEvent(email_analysis_id=row.id, user_id=owner, event_type="created", details_json=json.dumps({"input_type":"EML", "duplicate": bool(previous)})))
     for item in result.get("headers", []): db.add(EmailHeader(analysis_id=row.id, header_name=item["name"], header_value=item["value"], normalized_value=item.get("normalized"), position=item.get("position", 0)))
     for item in result.get("authentication", []): db.add(EmailAuthenticationResult(analysis_id=row.id, mechanism=item["mechanism"], status=item["status"], domain=item.get("domain"), selector=item.get("selector"), source=item.get("source"), evidence_json=json.dumps(item.get("evidence", {})), checked_at=datetime.now(timezone.utc)))
     for item in result.get("anomalies", []): db.add(EmailHeaderAnomaly(analysis_id=row.id, anomaly_type=item["type"], severity=item["severity"], evidence=item["evidence"], created_at=datetime.now(timezone.utc)))
@@ -539,11 +564,52 @@ def ingest_smtp_context(analysis_id: int, payload: dict, x_smtp_context_token: s
     return result
 
 @router.get("/message-analysis/email/{analysis_id}")
-def email_message_analysis_result(analysis_id: int, db: Session = Depends(get_db)):
+def email_message_analysis_result(analysis_id: int, user_id: str | None = Header(default=None, alias="X-User-ID"), x_admin_token: str | None = Header(default=None), db: Session = Depends(get_db)):
     row = db.get(EmailAnalysis, analysis_id)
-    if not row: raise HTTPException(404, "Email analysis not found")
-    result = json.loads(row.result_json); result["analysis_id"] = row.id; result["created_at"] = row.created_at
+    meta = db.query(MessageAnalysisMetadata).filter(MessageAnalysisMetadata.email_analysis_id == analysis_id).first()
+    if not row or not meta or not _can_view(meta, _owner(user_id), _admin(x_admin_token)): raise HTTPException(404, "Email analysis not found")
+    result = json.loads(row.result_json); result["analysis_id"] = row.id; result["created_at"] = row.created_at; result["metadata"] = _metadata_summary(meta)
     return result
+
+@router.delete("/message-analysis/email/{analysis_id}")
+def delete_email_analysis(analysis_id: int, user_id: str | None = Header(default=None, alias="X-User-ID"), x_admin_token: str | None = Header(default=None), db: Session = Depends(get_db)):
+    row=db.get(EmailAnalysis, analysis_id); meta=db.query(MessageAnalysisMetadata).filter(MessageAnalysisMetadata.email_analysis_id == analysis_id).first()
+    if not row or not meta or not _can_view(meta, _owner(user_id), _admin(x_admin_token)): raise HTTPException(404, "Email analysis not found")
+    db.query(MessageAnalysisEvent).filter(MessageAnalysisEvent.email_analysis_id == analysis_id).delete(synchronize_session=False); db.query(MessageIndicatorResult).filter(MessageIndicatorResult.email_analysis_id == analysis_id).delete(synchronize_session=False); db.query(MessageDomainSpoofingFinding).filter(MessageDomainSpoofingFinding.email_analysis_id == analysis_id).delete(synchronize_session=False); db.query(ContactRiskAssessment).filter(ContactRiskAssessment.email_analysis_id == analysis_id).delete(synchronize_session=False); db.query(EmailHeader).filter(EmailHeader.analysis_id == analysis_id).delete(synchronize_session=False); db.query(EmailAuthenticationResult).filter(EmailAuthenticationResult.analysis_id == analysis_id).delete(synchronize_session=False); db.query(EmailHeaderAnomaly).filter(EmailHeaderAnomaly.analysis_id == analysis_id).delete(synchronize_session=False); db.query(EmailRawMessage).filter(EmailRawMessage.analysis_id == analysis_id).delete(synchronize_session=False); db.query(EmailVerificationRun).filter(EmailVerificationRun.analysis_id == analysis_id).delete(synchronize_session=False); db.query(EmailSmtpContext).filter(EmailSmtpContext.analysis_id == analysis_id).delete(synchronize_session=False); db.delete(meta); db.delete(row); db.commit(); return {"deleted": True, "analysis_id": analysis_id}
+
+@router.get("/message-analysis/history")
+def message_analysis_history(page: int = Query(1, ge=1), page_size: int = Query(20, ge=1, le=100), search: str | None = Query(default=None), risk: str | None = Query(default=None), input_type: str | None = Query(default=None), provider: str | None = Query(default=None), user_id: str | None = Header(default=None, alias="X-User-ID"), x_admin_token: str | None = Header(default=None), db: Session = Depends(get_db)):
+    owner = _owner(user_id); query = db.query(MessageAnalysisMetadata)
+    if not _admin(x_admin_token): query = query.filter(MessageAnalysisMetadata.user_id == owner)
+    if search: query = query.filter(or_(MessageAnalysisMetadata.sender.ilike(f"%{search}%"), MessageAnalysisMetadata.subject.ilike(f"%{search}%")))
+    if risk: query = query.filter(MessageAnalysisMetadata.classification.ilike(f"%{risk}%"))
+    if input_type: query = query.filter(MessageAnalysisMetadata.input_type == input_type.upper())
+    if provider:
+        ids = [x[0] for x in db.query(MessageIndicatorResult.message_analysis_id).filter(MessageIndicatorResult.provider.ilike(f"%{provider}%")).distinct().all() if x[0] is not None]
+        if ids: query = query.filter(MessageAnalysisMetadata.message_analysis_id.in_(ids))
+        else: query = query.filter(MessageAnalysisMetadata.id == -1)
+    total = query.count(); items = query.order_by(MessageAnalysisMetadata.created_at.desc()).offset((page - 1) * page_size).limit(page_size).all()
+    return {"items": [_metadata_summary(item) for item in items], "page": page, "page_size": page_size, "total": total, "pages": (total + page_size - 1) // page_size}
+
+@router.get("/message-analysis/text/{analysis_id}")
+def message_analysis_detail(analysis_id: int, user_id: str | None = Header(default=None, alias="X-User-ID"), x_admin_token: str | None = Header(default=None), db: Session = Depends(get_db)):
+    row = db.get(MessageAnalysisRecord, analysis_id); meta = db.query(MessageAnalysisMetadata).filter(MessageAnalysisMetadata.message_analysis_id == analysis_id).first()
+    if not row or not meta or not _can_view(meta, _owner(user_id), _admin(x_admin_token)): raise HTTPException(404, "Message analysis not found")
+    result = json.loads(row.result_json); result["analysis_id"] = row.id; result["metadata"] = _metadata_summary(meta); result["history_events"] = [{"event_type": event.event_type, "created_at": event.created_at, "details": json.loads(event.details_json or "{}")} for event in db.query(MessageAnalysisEvent).filter(MessageAnalysisEvent.message_analysis_id == analysis_id).order_by(MessageAnalysisEvent.created_at).all()]; return result
+
+@router.post("/message-analysis/text/{analysis_id}/reanalyze")
+def reanalyze_message(analysis_id: int, user_id: str | None = Header(default=None, alias="X-User-ID"), x_admin_token: str | None = Header(default=None), db: Session = Depends(get_db)):
+    old = db.get(MessageAnalysisRecord, analysis_id); meta = db.query(MessageAnalysisMetadata).filter(MessageAnalysisMetadata.message_analysis_id == analysis_id).first(); content = db.query(MessageContent).filter(MessageContent.message_analysis_id == analysis_id).first()
+    if not old or not meta or not content or not _can_view(meta, _owner(user_id), _admin(x_admin_token)): raise HTTPException(404, "Message analysis not found")
+    text = content.content_bytes.decode(errors="replace"); brands=[{"brand_name": row.brand_name, "official_domain": row.official_domain, "verification_status": row.verification_status} for row in db.query(BrandRegistry).all()]; providers=[{"domain": row.domain, "provider_name": row.provider_name, "category": row.category, "disposable": row.disposable} for row in db.query(EmailProviderRegistry).all()]
+    result = analyze_message(text, brands=brands, email_providers=providers); digest = hashlib.sha256(text.encode()).hexdigest(); record = MessageAnalysisRecord(input_sha256=digest, source_type="TEXT", result_json=json.dumps(result)); db.add(record); db.flush(); ml=result.get("ml") or {}; owner=meta.user_id
+    db.add(MessageContent(message_analysis_id=record.id, content_bytes=content.content_bytes, sha256=digest, content_type="text/plain")); db.add(MessageAnalysisMetadata(message_analysis_id=record.id, user_id=owner, input_type="TEXT", risk_score=result.get("score"), classification=result.get("classification"), ml_prediction=ml.get("prediction"), ml_confidence=ml.get("malicious_probability"), llm_status=(result.get("llm") or {}).get("status") or "UNAVAILABLE", model_version=ml.get("model") or "current", analysis_status="COMPLETED", duplicate_of_id=analysis_id)); db.add(MessageAnalysisEvent(message_analysis_id=record.id, user_id=owner, event_type="reanalyzed", details_json=json.dumps({"previous_analysis_id": analysis_id}))); db.commit(); result["analysis_id"] = record.id; result["reanalysis_of"] = analysis_id; return result
+
+@router.delete("/message-analysis/text/{analysis_id}")
+def delete_message_analysis(analysis_id: int, user_id: str | None = Header(default=None, alias="X-User-ID"), x_admin_token: str | None = Header(default=None), db: Session = Depends(get_db)):
+    row=db.get(MessageAnalysisRecord, analysis_id); meta=db.query(MessageAnalysisMetadata).filter(MessageAnalysisMetadata.message_analysis_id == analysis_id).first()
+    if not row or not meta or not _can_view(meta, _owner(user_id), _admin(x_admin_token)): raise HTTPException(404, "Message analysis not found")
+    db.query(MessageAnalysisEvent).filter(MessageAnalysisEvent.message_analysis_id == analysis_id).delete(synchronize_session=False); db.query(MessageContent).filter(MessageContent.message_analysis_id == analysis_id).delete(synchronize_session=False); db.query(ContactRiskAssessment).filter(ContactRiskAssessment.message_analysis_id == analysis_id).delete(synchronize_session=False); db.query(MessageIndicatorResult).filter(MessageIndicatorResult.message_analysis_id == analysis_id).delete(synchronize_session=False); db.query(MessageDomainSpoofingFinding).filter(MessageDomainSpoofingFinding.message_analysis_id == analysis_id).delete(synchronize_session=False); db.delete(meta); db.delete(row); db.commit(); return {"deleted": True, "analysis_id": analysis_id}
 
 @router.get("/ml/status")
 def model_status():

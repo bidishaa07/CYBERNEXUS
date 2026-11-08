@@ -191,6 +191,20 @@ The production upgrade adds:
 
 Production configuration requires a real phone intelligence account and compatible endpoint. SPF/DMARC DNS inspection works without provider credentials. Independent DKIM cryptographic verification additionally requires original RFC 5322 bytes and a valid selector/public key; a selector record alone is not a message verification result.
 
+## Persistent message analysis history
+
+Phase 4 adds migration `017_message_history.sql` and persists text and `.eml` analyses with an owner, input type, sender/subject metadata, risk classification, ML prediction/confidence, LLM status, model version, duplicate linkage and audit events. Original text bytes are retained in the protected `message_contents` table for authorized re-analysis; uploaded email bytes were already retained in `email_raw_messages`.
+
+History API endpoints:
+
+- `GET /api/message-analysis/history` — paginated search/filter history (`page`, `page_size`, `search`, `risk`, `input_type`, `provider`).
+- `GET /api/message-analysis/text/{analysis_id}` — ownership-protected text report.
+- `POST /api/message-analysis/text/{analysis_id}/reanalyze` — creates a new record and preserves the prior result.
+- `DELETE /api/message-analysis/text/{analysis_id}` — ownership/admin-protected deletion with child-record cleanup.
+- `GET /api/message-analysis/email/{analysis_id}` and `DELETE /api/message-analysis/email/{analysis_id}` — protected email retrieval/deletion.
+
+Use `X-User-ID` for application-level ownership identity and `X-Admin-Token` for administrator access. The current repository does not yet include a full user-account/session service, so production deployments should place these endpoints behind the existing identity gateway before treating the header as an authenticated identity.
+
 ## Structure
 
 `frontend/` Vite/React dashboard · `backend/` FastAPI API, engines, persistence, and migrations · `engines/` model/detection modules · `dataset/` local training data · `tests/` automated backend tests · `docs/` architecture notes · `infrastructure/` deployment notes.
