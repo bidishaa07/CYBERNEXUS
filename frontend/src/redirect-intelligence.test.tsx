@@ -30,9 +30,9 @@ describe('redirect intelligence UI', () => {
     expect(screen.getByText(/Hop 1/)).toBeInTheDocument();
     fireEvent.click(screen.getByText(/Hop 1/));
     const hop = screen.getByText(/Hop 1/).closest('details')!;
-    expect(within(hop).getByText('Google Safe Browsing')).toBeInTheDocument();
-    expect(within(hop).getByText('THREAT_DETECTED')).toBeInTheDocument();
-    expect(within(hop).getByText('UNAVAILABLE')).toBeInTheDocument();
+    expect(within(hop).queryByText('Google Safe Browsing')).not.toBeInTheDocument();
+    expect(within(hop).queryByText('VirusTotal')).not.toBeInTheDocument();
+    expect(within(hop).getByText(/Provider intelligence unavailable/)).toBeInTheDocument();
     expect(screen.getByText('Known malicious destination detected (+45)')).toBeInTheDocument();
   });
 });

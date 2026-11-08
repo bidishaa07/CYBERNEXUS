@@ -2,7 +2,9 @@ import { useEffect, useState } from "react";
 import {
   Activity,
   BarChart3,
+  FileText,
   History,
+  MailCheck,
   MessageSquare,
   Network,
   Radar,
@@ -17,12 +19,20 @@ import SecurityFindingsPanel from "./components/SecurityFindingsPanel";
 import SecurityAuthorizationPanel from "./components/SecurityAuthorizationPanel";
 import WalletIntegrationPanel from "./components/WalletIntegrationPanel";
 import EvidenceManagementPanel from "./components/EvidenceManagementPanel";
+import EmailSecurityPanel from "./components/EmailSecurityPanel";
+import MessageHistoryPanel from "./components/MessageHistoryPanel";
+import MessageReportsPanel from "./components/MessageReportsPanel";
+import MLLifecycleStatusPanel from "./components/MLLifecycleStatusPanel";
 
 const nav = [
   ["Overview", BarChart3],
   ["Threat scanner", Radar],
   ["Website security", ShieldCheck],
   ["Message analysis", MessageSquare],
+  ["Email analysis", MailCheck],
+  ["Message analysis history", History],
+  ["Message analysis reports", FileText],
+  ["ML lifecycle status", Activity],
   ["Scan history", History],
   ["Community intel", Users],
   ["Threat correlation", Network],
@@ -140,6 +150,10 @@ export default function App() {
           )}
           {tab === "Website security" && <Module5Panel scan={result} />}
           {tab === "Message analysis" && <Message />}
+          {tab === "Email analysis" && <EmailSecurityPanel />}
+          {tab === "Message analysis history" && <MessageHistoryPanel />}
+          {tab === "Message analysis reports" && <MessageReportsPanel />}
+          {tab === "ML lifecycle status" && <MLLifecycleStatusPanel />}
           {tab === "Scan history" && <HistoryPanel items={history} />}{" "}
           {tab === "Community intel" && <Community />}
           {tab === "Threat correlation" && <Module4Panel />}
@@ -381,7 +395,12 @@ function RedirectPanel({ data }: any) {
           <div className="mt-4 space-y-2">
             {hops.map((hop: any) => {
               const destination = local[hop.destination_domain] || {};
-              const providers = destination.provider_results || [];
+              const providers = (destination.provider_results || []).filter(
+                (provider: any) =>
+                  !["Google Safe Browsing", "VirusTotal", "PhishTank"].includes(
+                    provider.provider,
+                  ),
+              );
               return (
                 <details
                   key={hop.sequence}
@@ -505,9 +524,6 @@ function RedirectPanel({ data }: any) {
   );
 }
 function ScanResult({ data }: any) {
-  const virusTotal = (data.threat_intelligence?.providers || []).find(
-    (x: any) => x.provider === "VirusTotal",
-  );
   return (
     <div className="glass rounded-3xl p-6">
       <div className="mb-6 flex flex-wrap items-center justify-between gap-4">
@@ -547,7 +563,6 @@ function ScanResult({ data }: any) {
       <BrandPanel data={data.domain_intelligence?.domain} />
       <RdapPanel data={data.domain_intelligence?.rdap} />
       <InfrastructurePanel data={data.domain_intelligence?.infrastructure} />
-      <VirusTotalPanel data={virusTotal} />
       <ExternalProvidersPanel />
       <UrlhausPanel />
       {(data.phishing.evidence || []).map((x: any, i: number) => (
@@ -774,7 +789,6 @@ function Card({ title, value }: any) {
     <div className="rounded-2xl border border-line bg-ink/40 p-4">
       <div className="text-xs text-slate-400">{title}</div>
       <div className="mt-3 text-sm font-medium capitalize">{value}</div>
-      {title === "Threat matches" && <SafeBrowsingInfo />}
     </div>
   );
 }

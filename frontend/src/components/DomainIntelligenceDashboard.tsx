@@ -15,7 +15,7 @@ function Row({label, value: rowValue}: any){ return <div className="flex items-s
 function List({items}: {items?: unknown[]}){ return items?.length ? <div className="space-y-1">{items.map((item, i)=><div key={i} className="rounded-md bg-ink/60 px-2 py-1 text-xs text-slate-300">{value(item)}</div>)}</div> : <div className="text-xs text-slate-500">Unavailable</div>; }
 
 export default function DomainIntelligenceDashboard({data}: any){
-  const intel=data?.domain_intelligence||{}; const domain=intel.domain||{}; const rdap=intel.rdap||{}; const infra=intel.infrastructure||{}; const identity=intel.identity||{}; const dns=data?.network?.dns||{}; const records=dns.records||{}; const providers=data?.threat_intelligence?.providers||[]; const findings=data?.threat_intelligence?.findings||[]; const [history,setHistory]=useState<any[]>([]);
+  const intel=data?.domain_intelligence||{}; const domain=intel.domain||{}; const rdap=intel.rdap||{}; const infra=intel.infrastructure||{}; const identity=intel.identity||{}; const dns=data?.network?.dns||{}; const records=dns.records||{}; const providers=(data?.threat_intelligence?.providers||[]).filter((item:any)=>!['Google Safe Browsing','VirusTotal','PhishTank'].includes(item.provider)); const findings=data?.threat_intelligence?.findings||[]; const [history,setHistory]=useState<any[]>([]);
   const registration=rdap.events?.registration; const age=registration ? `${Math.max(0, Math.floor((Date.now()-new Date(registration).getTime())/86400000/365.25))} years` : 'Unavailable';
   useEffect(()=>{api('/scans').then(setHistory).catch(()=>setHistory([]))},[]);
   const sources=useMemo(()=>[rdap, ...(infra.providers||[]), ...providers].filter(Boolean),[rdap,infra.providers,providers]);
