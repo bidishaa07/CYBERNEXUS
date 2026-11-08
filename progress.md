@@ -328,7 +328,9 @@ This checklist records repository implementation and observed runtime state. A c
 - [x] Added restricted CORS methods/headers and cookie credentials handling.
 - [x] Authentication regression tests: missing auth, verified subject synchronization and User A/User B isolation pass.
 - [x] Full backend suite: `128 passed, 1 skipped`; frontend typecheck and production build pass.
-- [ ] A real Keycloak/Auth0/Clerk issuer, JWKS URL, audience and client configuration must still be supplied in the deployment environment; tests use controlled identity fixtures and do not claim live provider connectivity.
+- [x] Keycloak realm/client configuration is supplied locally; tests use controlled identity fixtures and live connectivity remains a separate runtime check.
+- [x] Keycloak issuer, JWKS URL, audience, client ID, authorization URL and redirect URI are now loaded from the local backend environment and exposed only as non-secret frontend configuration.
+- [ ] Live Keycloak/JWKS connectivity is not verified: the configured localhost:8080 issuer is currently unreachable, so AUTH_REQUIRED remains false in development to avoid locking out the application.
 
 ### Phase 5 - message analysis reports and administrator review
 

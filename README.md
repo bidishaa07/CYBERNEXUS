@@ -217,7 +217,7 @@ Authentication endpoints:
 - `POST /api/auth/logout` — clears the session cookie.
 - `POST /api/admin/identity-links` — explicitly links a legacy owner ID to an already-authenticated external subject and records an audit event.
 
-The frontend includes an OIDC sign-in/logout status panel and sends cookies using `credentials: include`. Registration and password handling remain with the configured identity provider; the application never stores provider passwords or refresh tokens.
+The frontend includes an OIDC sign-in/logout status panel and sends cookies using `credentials: include`. Registration and password handling remain with the configured identity provider; the application never stores provider passwords or refresh tokens. The local environment now contains the supplied Keycloak realm/client configuration; live connectivity remains dependent on Keycloak running at the configured issuer.
 
 ## Phase 5 message reports and administrator review
 
