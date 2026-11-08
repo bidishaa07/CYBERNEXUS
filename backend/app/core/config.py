@@ -61,6 +61,8 @@ class Settings(BaseSettings):
     phone_reputation_cache_ttl_seconds: int = 900
     phone_reputation_max_retries: int = 2
     phone_reputation_provider: str = "configured-phone-provider"
+    ipqualityscore_api_key: str = ""
+    ipqualityscore_base_url: str = "https://ipqualityscore.com/api/json/phone"
     disposable_email_domains: str = ""
     dns_cache_ttl_seconds: int = 300
     dns_timeout_seconds: float = 4

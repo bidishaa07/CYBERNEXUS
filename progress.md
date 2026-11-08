@@ -275,6 +275,7 @@ This checklist records repository implementation and observed runtime state. A c
 
 - [x] Added libphonenumber-backed international phone parsing, including E.164, national/international formats, country code, region, carrier and number type.
 - [x] Added a configurable phone reputation adapter with backend-only credentials, timeout/error states, bounded retry with jitter, in-memory TTL caching and no-provider UNKNOWN behavior.
+- [x] Added an explicit IPQualityScore Phone Validation adapter using its configured API key and preserving returned fraud/abuse/VOIP/carrier fields without fabrication.
 - [x] Added transparent phone risk scoring; validity alone never produces a SAFE or malicious verdict.
 - [x] Added SQLAlchemy model and migration `015_contact_intelligence.sql` for provider registry and persisted contact risk assessments.
 - [x] Seeded a traceable registry for Gmail, Outlook, Hotmail, Yahoo, iCloud, Proton, Zoho and selected disposable providers; disposable status is not treated as confirmed fraud.

@@ -28,19 +28,24 @@ def validate_phone(value):
     except Exception as exc: return {**base,"status":"COMPLETED","valid":False,"possible":False,"reason":type(exc).__name__}
 
 def phone_reputation(number):
-    if not settings.phone_reputation_api_url.strip(): return {"provider":"Phone abuse reputation","status":"NOT_CONFIGURED","verdict":"unknown","classification":"UNKNOWN","reason":"Phone abuse reputation provider not configured.","checked_at":_now()}
-    key=(number,settings.phone_reputation_api_url)
+    provider_name = settings.phone_reputation_provider
+    provider_url = settings.phone_reputation_api_url.strip()
+    if settings.ipqualityscore_api_key.strip():
+        provider_url = f"{settings.ipqualityscore_base_url.rstrip('/')}/{settings.ipqualityscore_api_key.strip()}/{quote(number, safe='+')}"
+        provider_name = "IPQualityScore Phone Validation"
+    if not provider_url: return {"provider":provider_name,"status":"NOT_CONFIGURED","verdict":"unknown","classification":"UNKNOWN","reason":"Phone abuse reputation provider not configured.","checked_at":_now()}
+    key=(number,provider_url)
     try:
         cached = cache.get("phone:" + settings.phone_reputation_api_url + ":" + number)
         if cached: return {**cached, "cached": True}
     except RuntimeError as exc:
-        return {"provider": settings.phone_reputation_provider, "status": "UNAVAILABLE", "verdict": "unknown", "reason": "Distributed cache is required in production.", "error": type(exc).__name__, "checked_at": _now()}
+        return {"provider": provider_name, "status": "UNAVAILABLE", "verdict": "unknown", "reason": "Distributed cache is required in production.", "error": type(exc).__name__, "checked_at": _now()}
     headers={"Accept":"application/json"}; token=settings.phone_reputation_api_key.strip()
     if token: headers[settings.phone_reputation_auth_header]=f"Bearer {token}" if settings.phone_reputation_auth_header.lower()=="authorization" else token
     response = None
     for attempt in range(3):
       try:
-        response=httpx.get(settings.phone_reputation_api_url,params={"phone":number},headers=headers,timeout=settings.phone_reputation_timeout_seconds,follow_redirects=False)
+        response=httpx.get(provider_url,params={} if settings.ipqualityscore_api_key.strip() else {"phone":number},headers=headers,timeout=settings.phone_reputation_timeout_seconds,follow_redirects=False)
         if response.status_code not in (429,) and response.status_code < 500: break
         if attempt < 2: time.sleep(min(2 ** attempt + random.random(), 4))
       except httpx.TimeoutException:
@@ -50,13 +55,15 @@ def phone_reputation(number):
         if attempt == 2: return {"provider":"Phone abuse reputation","status":"UNAVAILABLE","verdict":"unknown","reason":"Phone reputation could not be verified.","error":type(exc).__name__,"checked_at":_now()}
         time.sleep(min(2 ** attempt + random.random(), 4))
     try:
-        if response is None: return {"provider":"Phone abuse reputation","status":"UNAVAILABLE","verdict":"unknown","reason":"Phone reputation could not be verified.","checked_at":_now()}
-        if response.status_code in (401,403): return {"provider":"Phone abuse reputation","status":"INVALID_CREDENTIALS","verdict":"unknown","reason":"Provider rejected credentials","checked_at":_now()}
-        if response.status_code==429: return {"provider":"Phone abuse reputation","status":"RATE_LIMITED","verdict":"unknown","reason":"Provider rate limit reached","checked_at":_now()}
-        if response.status_code>=500: return {"provider":"Phone abuse reputation","status":"UNAVAILABLE","verdict":"unknown","reason":"Provider server error","checked_at":_now()}
-        if not 200<=response.status_code<300: return {"provider":"Phone abuse reputation","status":"PROVIDER_ERROR","verdict":"unknown","reason":f"HTTP {response.status_code}","checked_at":_now()}
-        payload=response.json(); verdict=str(payload.get("verdict") or payload.get("reputation") or "unknown").lower(); verdict="malicious" if verdict in {"fraud","scam","malicious"} else "suspicious" if verdict in {"spam","suspicious","high_risk"} else "clean" if verdict in {"clean","safe","low_risk"} else "unknown"
-        result={"provider":settings.phone_reputation_provider,"status":"COMPLETED","verdict":verdict,"confidence":payload.get("confidence"),"abuse_reports":payload.get("abuse_reports"),"evidence":payload,"checked_at":_now()}
+        if response is None: return {"provider":provider_name,"status":"UNAVAILABLE","verdict":"unknown","reason":"Phone reputation could not be verified.","checked_at":_now()}
+        if response.status_code in (401,403): return {"provider":provider_name,"status":"INVALID_CREDENTIALS","verdict":"unknown","reason":"Provider rejected credentials","checked_at":_now()}
+        if response.status_code==429: return {"provider":provider_name,"status":"RATE_LIMITED","verdict":"unknown","reason":"Provider rate limit reached","checked_at":_now()}
+        if response.status_code>=500: return {"provider":provider_name,"status":"UNAVAILABLE","verdict":"unknown","reason":"Provider server error","checked_at":_now()}
+        if not 200<=response.status_code<300: return {"provider":provider_name,"status":"PROVIDER_ERROR","verdict":"unknown","reason":f"HTTP {response.status_code}","checked_at":_now()}
+        payload=response.json(); fraud_score=payload.get("fraud_score")
+        inferred="suspicious" if isinstance(fraud_score,(int,float)) and fraud_score >= 75 else "clean" if isinstance(fraud_score,(int,float)) and fraud_score < 25 else "unknown"
+        verdict=str(payload.get("verdict") or payload.get("reputation") or inferred).lower(); verdict="malicious" if verdict in {"fraud","scam","malicious"} else "suspicious" if verdict in {"spam","suspicious","high_risk"} else "clean" if verdict in {"clean","safe","low_risk"} else "unknown"
+        result={"provider":provider_name,"status":"COMPLETED","verdict":verdict,"confidence":payload.get("confidence"),"fraud_score":fraud_score,"abuse_reports":payload.get("abuse_reports"),"recent_abuse":payload.get("recent_abuse"),"voip":payload.get("VOIP",payload.get("voip")),"line_type":payload.get("line_type"),"carrier":payload.get("carrier"),"evidence":payload,"checked_at":_now()}
         try: cache.set("phone:" + settings.phone_reputation_api_url + ":" + number, result, settings.phone_reputation_cache_ttl_seconds)
         except RuntimeError as exc: result.update(status="UNAVAILABLE", verdict="unknown", reason="Distributed cache is required in production.", error=type(exc).__name__)
         return result

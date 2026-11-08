@@ -157,6 +157,7 @@ Message analysis now enriches extracted phone numbers and email addresses with e
 
 - Phone numbers are parsed with `libphonenumber` and return country, formats, carrier/type metadata and validity separately from abuse reputation.
 - Phone abuse reputation is an optional backend-only adapter configured with `PHONE_REPUTATION_API_URL`, `PHONE_REPUTATION_API_KEY`, and related timeout/cache settings. Missing or failed provider lookups remain `UNKNOWN`.
+- IPQualityScore Phone Validation is supported as an explicit adapter through `IPQUALITYSCORE_API_KEY` and `IPQUALITYSCORE_BASE_URL`; its fraud score, recent-abuse, VOIP, carrier and line-type fields are preserved only when returned by the provider.
 - Email domains are classified from the persisted provider registry. Legitimate free providers are neutral/low-risk, disposable providers are identified as disposable rather than malicious, and elevated risk requires actual threat-intelligence evidence.
 - Email indicators receive MX, SPF and DMARC presence checks and are correlated with the configured URL/domain threat providers without sending full message content.
 - Contact assessments are persisted in `contact_risk_assessments`; the provider registry is initialized by migration `015_contact_intelligence.sql`.

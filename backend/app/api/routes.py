@@ -76,7 +76,9 @@ def health():
 
 @router.get("/intelligence/providers/health")
 def intelligence_provider_health():
-    return {"phone_reputation": {"status": "CONFIGURED" if settings.phone_reputation_api_url.strip() and settings.phone_reputation_api_key.strip() else "NOT_CONFIGURED", "provider": settings.phone_reputation_provider}, "cache": cache_health(), "database": {"status": "CONNECTED" if health()["database"] == "ok" else "UNAVAILABLE"}, "workers": {"status": "CONFIGURED" if settings.celery_broker_url else "NOT_CONFIGURED"}}
+    phone_configured = bool((settings.phone_reputation_api_url.strip() and settings.phone_reputation_api_key.strip()) or settings.ipqualityscore_api_key.strip())
+    phone_provider = "IPQualityScore Phone Validation" if settings.ipqualityscore_api_key.strip() else settings.phone_reputation_provider
+    return {"phone_reputation": {"status": "CONFIGURED" if phone_configured else "NOT_CONFIGURED", "provider": phone_provider}, "cache": cache_health(), "database": {"status": "CONNECTED" if health()["database"] == "ok" else "UNAVAILABLE"}, "workers": {"status": "CONFIGURED" if settings.celery_broker_url else "NOT_CONFIGURED"}}
 
 @router.post("/intelligence/phone/analyze")
 def intelligence_phone(payload: dict, db: Session = Depends(get_db)):
