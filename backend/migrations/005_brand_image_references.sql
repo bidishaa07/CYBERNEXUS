@@ -1,0 +1,3 @@
+CREATE TABLE IF NOT EXISTS brand_image_reference_assets (id INTEGER PRIMARY KEY, brand_id INTEGER, asset_type VARCHAR(20) NOT NULL, original_source VARCHAR(2048), content_type VARCHAR(120) NOT NULL, width INTEGER, height INTEGER, sha256 VARCHAR(64) NOT NULL, phash TEXT NOT NULL, dhash TEXT, ahash TEXT, image_bytes BLOB NOT NULL, approval_status VARCHAR(30) DEFAULT 'pending', source VARCHAR(255), uploaded_at TIMESTAMP, approved_at TIMESTAMP);
+CREATE INDEX IF NOT EXISTS ix_brand_image_reference_brand_id ON brand_image_reference_assets(brand_id);
+CREATE INDEX IF NOT EXISTS ix_brand_image_reference_approval ON brand_image_reference_assets(approval_status);

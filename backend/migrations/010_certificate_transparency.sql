@@ -1,0 +1,5 @@
+CREATE TABLE IF NOT EXISTS certificate_transparency_entries (id INTEGER PRIMARY KEY, scan_id INTEGER, certificate_id VARCHAR(120), fingerprint_sha256 VARCHAR(128), issuer TEXT, subject TEXT, san_json TEXT DEFAULT '[]', serial_number VARCHAR(255), not_before TIMESTAMP, not_after TIMESTAMP, observation_timestamp TIMESTAMP, ct_log VARCHAR(255), source VARCHAR(255) NOT NULL, status VARCHAR(30), created_at TIMESTAMP);
+CREATE INDEX IF NOT EXISTS ix_ct_entries_scan_id ON certificate_transparency_entries(scan_id);
+CREATE INDEX IF NOT EXISTS ix_ct_entries_fingerprint ON certificate_transparency_entries(fingerprint_sha256);
+CREATE TABLE IF NOT EXISTS certificate_transparency_anomalies (id INTEGER PRIMARY KEY, scan_id INTEGER, finding_type VARCHAR(80) NOT NULL, fingerprint VARCHAR(128), domain VARCHAR(255), issuer TEXT, source VARCHAR(255), observation_timestamp TIMESTAMP, confidence VARCHAR(30), evidence_json TEXT DEFAULT '{}', explanation TEXT, created_at TIMESTAMP);
+CREATE INDEX IF NOT EXISTS ix_ct_anomalies_scan_id ON certificate_transparency_anomalies(scan_id);

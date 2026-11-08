@@ -1,0 +1,156 @@
+# Digital Trust Intelligence
+
+Digital Trust Intelligence is a Vite/React and FastAPI application for passive, explainable website and message risk analysis. It combines URL heuristics, domain intelligence, DNS/HTTP/TLS checks, certificate transparency, external reputation providers, community intelligence, ML-assisted message analysis, and configurable LLM explanations.
+
+## Run locally
+
+The application does not require Docker.
+
+```powershell
+python -m venv .venv
+.\.venv\Scripts\Activate.ps1
+pip install -r backend/requirements.txt
+
+# Backend, from the repository root
+$env:PYTHONPATH=(Get-Location).Path
+python -m uvicorn backend.app.main:app --host 127.0.0.1 --port 8001
+
+# Frontend, in another terminal
+cd frontend
+npm install
+npm run dev -- --host 0.0.0.0
+```
+
+Open `http://localhost:5173`. The API is available at `http://127.0.0.1:8001`; API documentation is at `/docs`.
+
+The default database is SQLite. Set `DATABASE_URL` to a PostgreSQL SQLAlchemy URL for production. Existing schema changes are applied by the migration runner in `backend/migrations/`.
+
+## Configuration
+
+Copy `.env.example` to `.env`. Never commit `.env`; secrets are backend-only and are not exposed to Vite.
+
+Important provider variables:
+
+```env
+GOOGLE_SAFE_BROWSING_API_KEY=
+GOOGLE_CLOUD_PROJECT_ID=
+VIRUSTOTAL_API_KEY=
+OTX_API_KEY=
+OPSWAT_API_KEY=
+URLHAUS_API_URL=https://urlhaus-api.abuse.ch/v1/url/
+URLHAUS_AUTH_KEY=
+IPINFO_TOKEN=
+IPINFO_BASE_URL=https://api.ipinfo.io/lite
+IP_INTELLIGENCE_PROVIDER=freeipapi
+FREEIPAPI_BASE_URL=https://freeipapi.com/api/json/
+LLM_API_KEY=
+LLM_MODEL=kimi-k3
+LLM_BASE_URL=https://api.moonshot.ai/v1
+```
+
+Provider status endpoints:
+
+- `GET http://127.0.0.1:8001/api/providers/google-safe-browsing/status`
+- `POST http://127.0.0.1:8001/api/providers/google-safe-browsing/verify`
+- `GET http://127.0.0.1:8001/api/providers/virustotal/status`
+- `GET http://127.0.0.1:8001/api/providers/external/status`
+- `GET http://127.0.0.1:8001/api/providers/urlhaus/status`
+- `GET http://127.0.0.1:8001/api/llm/status`
+- `POST http://127.0.0.1:8001/api/llm/verify`
+
+An absent or failed provider is represented as unavailable/unknown. It is never converted into a clean verdict. URL submissions to VirusTotal require explicit confirmation and are not performed during ordinary scans.
+
+## Implemented analysis
+
+- URL normalization with private, loopback, link-local, reserved, and metadata destination protection.
+- Explainable phishing heuristics and rule-based risk scoring.
+- Damerau/Levenshtein typosquatting detection, lookalike substitutions, IDN/Punycode indicators, brand subdomains, and TLD variations.
+- Safe RDAP discovery with HTTPS-only validated redirects, IANA bootstrap data, timeouts, and structured unavailable states.
+- DNS records, TLS certificate checks, redirects, HTTP security headers, cookies, and passive website identity checks.
+- Redirect intelligence with validated hop collection, loop/depth/downgrade handling, destination comparison, explainable redirect risk scoring, persistent redirect hops, and a frontend timeline/details panel.
+- IPinfo Lite lookup with Bearer authentication and FreeIPAPI fallback. Unsupported plan fields remain unavailable.
+- Google Safe Browsing v4 adapter with retries, cache, threat categories, and explicit connection diagnostics. It requires a valid key and enabled Google API.
+- VirusTotal API v3 lookup-first adapter with URL identifiers, report parsing, domain/IP lookup helpers, explicit submission, analysis polling, caching, and quota handling.
+- AlienVault OTX and OPSWAT MetaDefender domain lookups connected to scan findings and risk scoring.
+- URLhaus authenticated lookup connected to scan findings; PhishTank remains a separate optional provider.
+- Community reports, persistent provider verdicts, threat indicators, scan history, and report commitments.
+- Dataset-backed message classifier and optional Kimi explanation service with rate-limit reporting.
+- TLS Phase 1 certificate-chain intelligence: presented-chain collection with pyOpenSSL, AIA issuer discovery, bounded alternative-path construction, cryptographic path validation, trust-anchor checks, and SAN validation.
+- TLS Phase 2 revocation intelligence: cryptographic OCSP and CRL checks, conservative conflict aggregation, persistent revocation caching, background refresh jobs, system trust-store checks, and configurable CA distrust/advisory-feed support.
+- TLS Phase 3 configuration grading: actual TLS 1.0/1.1/1.2/1.3 probes, negotiated cipher analysis, key-exchange/AEAD/forward-secrecy grading, certificate-algorithm grading, and explicit DNS/IP SAN mismatch reporting.
+- TLS Phase 4 Certificate Transparency intelligence: normalized crt.sh history, issuer/SAN/duplicate/wildcard observations, conservative anomaly evidence, persistent CT entries/anomalies, and a CT timeline panel.
+- TLS Phase 5 independent certificate risk: configurable evidence weights, deduplicated chain/revocation/TLS/SAN/CT findings, persistent certificate assessments, separate certificate score card, and bounded influence on overall reputation.
+
+## Dataset model
+
+Datasets are stored under `dataset/`. Train the reproducible classifier with:
+
+```powershell
+python engines/ml_engine/train.py --dataset dataset\Merged_Dataset.csv --max-rows 100000
+```
+
+The model reports precision, recall, F1, accuracy, label distribution, and a confusion matrix. Model output is a risk estimate, not proof of fraud.
+
+## Verification
+
+Run backend tests:
+
+```powershell
+$env:PYTHONPATH=(Get-Location).Path
+python -m pytest tests -q
+```
+
+Build the frontend:
+
+```powershell
+cd frontend
+npm run build
+```
+
+The current verified baseline is recorded in [`progress.md`](progress.md). The latest local verification is `96 passed, 1 skipped` for the backend suite, with frontend typechecking, the component test, and the production build also passing. The Phase 5 live certificate check was verified on scan `106` with certificate risk `25/100`, TLS grade `A`, and a bounded `+6` overall-risk influence.
+
+Redirect endpoints:
+
+- `GET http://127.0.0.1:8001/api/scans/{scan_id}/redirects`
+- `GET http://127.0.0.1:8001/api/scans/{scan_id}/redirects/{sequence}`
+
+Redirect scoring is intentionally separate from the overall score. Cross-domain movement alone is a warning signal, not proof of maliciousness; confirmed destination findings, brand impersonation, HTTPS downgrade, and excessive depth contribute explainable points. Unavailable destination intelligence is reported as missing and does not create a clean verdict.
+
+## TLS certificate intelligence
+
+Certificate endpoints include:
+
+- `GET /api/scans/{scan_id}/certificate`
+- `GET /api/scans/{scan_id}/certificate/chain`
+- `GET /api/scans/{scan_id}/certificate/validation`
+- `GET /api/scans/{scan_id}/certificate/revocation`
+- `POST /api/scans/{scan_id}/certificate/revocation/refresh`
+- `GET /api/certificate/revocation/jobs/{job_id}`
+- `GET /api/scans/{scan_id}/certificate/transparency`
+- `GET /api/scans/{scan_id}/certificate/risk`
+
+Certificate migrations include `007_certificate_chain.sql`, `008_certificate_revocation.sql`, `009_revocation_cache_ca_feed.sql`, `010_certificate_transparency.sql`, and `011_certificate_risk.sql`.
+
+The dashboard displays chain validation, alternative paths, OCSP/CRL status, CA trust, TLS grades, SAN evidence, CT history/anomalies, and certificate risk. Unknown or unavailable certificate evidence is never rendered as clean.
+
+Relevant configuration:
+
+```env
+CERTIFICATE_REVOCATION_TIMEOUT_SECONDS=6
+CERTIFICATE_REVOCATION_CACHE_TTL_SECONDS=900
+CERTIFICATE_DISTRUST_FINGERPRINTS=
+CA_REPUTATION_FEED_URL=
+CA_REPUTATION_FEED_TTL_SECONDS=21600
+TLS_GRADING_TIMEOUT_SECONDS=5
+TLS_MINIMUM_VERSION=TLSv1.2
+TLS_MINIMUM_CIPHER_BITS=128
+CERTIFICATE_RISK_WEIGHTS_JSON={}
+```
+
+## Security and provider limitations
+
+Scanning is passive. Requests have timeouts and response limits, redirects are revalidated, and downloaded scripts are never executed. Public VirusTotal use and Google Safe Browsing use must follow the providers' terms; commercial deployments may require Google Web Risk or a suitable commercial VirusTotal agreement. Historical WHOIS data, ownership, brand truth, and a clean provider result are not fabricated or inferred beyond available evidence.
+
+## Structure
+
+`frontend/` Vite/React dashboard · `backend/` FastAPI API, engines, persistence, and migrations · `engines/` model/detection modules · `dataset/` local training data · `tests/` automated backend tests · `docs/` architecture notes · `infrastructure/` deployment notes.

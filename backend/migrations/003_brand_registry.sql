@@ -1,0 +1,4 @@
+CREATE TABLE IF NOT EXISTS brand_registry (id INTEGER PRIMARY KEY, brand_name VARCHAR(120) NOT NULL, official_domain VARCHAR(255) NOT NULL, official_website VARCHAR(2048), logo_url VARCHAR(2048), verification_status VARCHAR(30) DEFAULT 'unknown', source VARCHAR(255), source_reliability VARCHAR(30), verification_date TIMESTAMP, created_at TIMESTAMP);
+CREATE INDEX IF NOT EXISTS ix_brand_registry_official_domain ON brand_registry(official_domain);
+CREATE TABLE IF NOT EXISTS brand_verification_evidence (id INTEGER PRIMARY KEY, brand_id INTEGER, evidence_type VARCHAR(80) NOT NULL, evidence_value TEXT NOT NULL, source VARCHAR(255), status VARCHAR(30) DEFAULT 'unverified', checked_at TIMESTAMP);
+CREATE INDEX IF NOT EXISTS ix_brand_verification_evidence_brand_id ON brand_verification_evidence(brand_id);

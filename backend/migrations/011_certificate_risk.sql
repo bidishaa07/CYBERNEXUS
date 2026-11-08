@@ -1,0 +1,2 @@
+CREATE TABLE IF NOT EXISTS certificate_risk_assessments (id INTEGER PRIMARY KEY, scan_id INTEGER NOT NULL, score INTEGER NOT NULL, level VARCHAR(30) NOT NULL, confidence VARCHAR(30), validation_status VARCHAR(30), tls_grade VARCHAR(10), revocation_status VARCHAR(30), ca_trust_status VARCHAR(40), ct_anomaly_score INTEGER DEFAULT 0, findings_json TEXT DEFAULT '[]', evidence_json TEXT DEFAULT '{}', checked_at TIMESTAMP);
+CREATE INDEX IF NOT EXISTS ix_certificate_risk_assessments_scan_id ON certificate_risk_assessments(scan_id);

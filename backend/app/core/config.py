@@ -1,0 +1,71 @@
+from pydantic_settings import BaseSettings, SettingsConfigDict
+
+class Settings(BaseSettings):
+    database_url: str = "sqlite:///./digital_trust.db"
+    google_safe_browsing_api_key: str = ""
+    google_cloud_project_id: str = ""
+    virustotal_api_key: str = ""
+    otx_api_key: str = ""
+    opswat_api_key: str = ""
+    virustotal_base_url: str = "https://www.virustotal.com/api/v3"
+    virustotal_timeout_seconds: float = 10
+    virustotal_max_retries: int = 2
+    virustotal_retry_backoff_seconds: float = 0.2
+    virustotal_cache_ttl_seconds: int = 900
+    urlhaus_api_url: str = "https://urlhaus-api.abuse.ch/v1/url/"
+    urlhaus_auth_key: str = ""
+    phishtank_api_url: str = ""
+    google_safe_browsing_api_url: str = "https://safebrowsing.googleapis.com/v4/threatMatches:find"
+    google_safe_browsing_timeout_seconds: float = 8
+    google_safe_browsing_max_retries: int = 2
+    google_safe_browsing_retry_backoff_seconds: float = 0.2
+    google_safe_browsing_status_cache_seconds: int = 300
+    crtsh_api_url: str = "https://crt.sh/?q={domain}&output=json"
+    admin_api_token: str = "change-this-admin-token"
+    public_app_url: str = "http://localhost:5173"
+    llm_api_key: str = ""
+    llm_model: str = "meta/llama-3.1-8b-instruct"
+    llm_base_url: str = "https://integrate.api.nvidia.com/v1"
+    llm_timeout_seconds: float = 30
+    llm_connect_timeout_seconds: float = 5
+    llm_read_timeout_seconds: float = 25
+    llm_write_timeout_seconds: float = 10
+    llm_pool_timeout_seconds: float = 5
+    llm_max_retries: int = 2
+    llm_retry_backoff_seconds: float = 1
+    llm_circuit_failure_threshold: int = 3
+    llm_circuit_open_seconds: int = 60
+    llm_secondary_api_key: str = ""
+    llm_secondary_model: str = ""
+    llm_secondary_base_url: str = ""
+    llm_secondary_timeout_seconds: float = 30
+    llm_secondary_privacy_authorized: bool = False
+    llm_primary_privacy_authorized: bool = True
+    ipinfo_token: str = ""
+    ip_intelligence_provider: str = "freeipapi"
+    freeipapi_base_url: str = "https://freeipapi.com/api/json/"
+    ipinfo_base_url: str = "https://api.ipinfo.io/lite"
+    ipinfo_timeout_seconds: float = 6
+    ipinfo_cache_ttl_seconds: int = 3600
+    ipinfo_max_ips_per_scan: int = 10
+    max_page_size_bytes: int = 1000000
+    max_redirect_hops: int = 5
+    provider_timeout_seconds: int = 8
+    rdap_bootstrap_url: str = "https://data.iana.org/rdap/dns.json"
+    rdap_timeout_seconds: int = 8
+    rdap_max_redirects: int = 3
+    certificate_revocation_timeout_seconds: float = 6
+    certificate_revocation_cache_ttl_seconds: int = 900
+    certificate_distrust_fingerprints: str = ""
+    ca_reputation_feed_url: str = ""
+    ca_reputation_feed_ttl_seconds: int = 21600
+    tls_grading_timeout_seconds: float = 5
+    tls_minimum_version: str = "TLSv1.2"
+    tls_minimum_cipher_bits: int = 128
+    certificate_risk_weights_json: str = "{}"
+    # Support the workspace .env and an optional backend/.env without exposing
+    # provider credentials to the frontend. The backend-local file wins when
+    # both files define the same setting.
+    model_config = SettingsConfigDict(env_file=(".env", "backend/.env"), extra="ignore")
+
+settings = Settings()

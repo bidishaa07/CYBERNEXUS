@@ -1,0 +1,3 @@
+CREATE TABLE IF NOT EXISTS redirect_hops (id INTEGER PRIMARY KEY, scan_id INTEGER, sequence INTEGER NOT NULL, source_url VARCHAR(2048) NOT NULL, destination_url VARCHAR(2048) NOT NULL, source_domain VARCHAR(255), destination_domain VARCHAR(255), status_code INTEGER, redirect_type VARCHAR(30), https VARCHAR(10), https_downgrade VARCHAR(10), destination_ips_json TEXT DEFAULT '[]', reputation_json TEXT DEFAULT '{}', analysis_status VARCHAR(30) DEFAULT 'complete', checked_at TIMESTAMP);
+CREATE INDEX IF NOT EXISTS ix_redirect_hops_scan_id ON redirect_hops(scan_id);
+CREATE INDEX IF NOT EXISTS ix_redirect_hops_destination_domain ON redirect_hops(destination_domain);
