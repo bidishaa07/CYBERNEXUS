@@ -4,10 +4,11 @@ Last verified: 2026-11-08
 
 ## Latest audit evidence
 
-- Backend tests: `96 passed, 1 skipped` using the project virtual environment.
+- Backend tests: `170 passed, 1 skipped` using the project virtual environment.
+- Frontend component tests: `4 passed`; TypeScript checking and the Vite production build passed.
 - Frontend build: Vite production build succeeded.
-- Frontend runtime: Vite served `http://localhost:5173/` with HTTP 200.
-- Live API health: `/api/health` returned `ok`.
+- Frontend runtime: Vite served `http://127.0.0.1:5173/` with HTTP 200.
+- Live API health: `http://127.0.0.1:8000/api/health` returned `ok` with database status `ok`.
 - Live OTX status: connected, HTTP 200.
 - Live OPSWAT MetaDefender Cloud status: connected, HTTP 200.
 - Live URLhaus status: connected, HTTP 200.
@@ -15,16 +16,16 @@ Last verified: 2026-11-08
 - VirusTotal: `NOT_CONFIGURED`; no usable backend key is loaded.
 - Kimi: `CONFIGURED_NOT_TESTED`; live verification remains blocked by HTTP 429.
 - TLS Phase 5 live certificate risk verification: certificate score and bounded overall-risk influence verified on scan `106`.
-- `.gitignore` exists, but this workspace root is not a Git checkout, so Git status/ignore behavior was not independently verifiable.
+- `.env` is ignored by Git and was not committed; the repository is connected to `quantum-nil/CYBERNEXUS`.
 
 This checklist records repository implementation and observed runtime state. A checked item means it was implemented and verified locally or through a live provider check. An unchecked item is incomplete, credential-dependent, or not yet verified.
 
 ## Runtime baseline
 
-- [x] Backend starts on `127.0.0.1:8001`.
-- [x] Vite frontend starts on `localhost:5173`.
+- [x] Backend starts on `127.0.0.1:8000`.
+- [x] Vite frontend starts on `127.0.0.1:5173`.
 - [x] Backend health endpoint returns `ok`.
-- [x] Backend test suite passes: `96 passed, 1 skipped`.
+- [x] Backend test suite passes: `170 passed, 1 skipped`.
 - [x] Frontend production build succeeds with Vite.
 - [x] `.env` is ignored by Git.
 - [x] Credentials are kept out of frontend source and provider result payloads.
@@ -375,7 +376,7 @@ This checklist records repository implementation and observed runtime state. A c
 - [x] Verification: controlled retraining tests pass; full backend suite is 133 passed, 1 skipped; frontend typecheck, component tests and production build pass.
 - [x] Created and approved the cleaned reproducible dataset snapshot merged-managed-dataset-v1 (98,778 records; checksum stored) after the raw dataset failed quality validation.
 - [x] Trained, evaluated, approved and deployed retrain-3-20261108070111; live /api/ml/status reports the model and dataset versions.
-- [x] Restarted backend at http://127.0.0.1:8001 and frontend at http://127.0.0.1:5173; health endpoint is OK and Chromium browser E2E passed 1 test.
+- [x] Restarted backend at http://127.0.0.1:8000 and frontend at http://127.0.0.1:5173; health endpoint is OK and Chromium browser E2E passed 1 test.
 - [x] Added a separate ML Lifecycle Status panel with live model version, dataset provenance, evaluation metrics and runtime health.
 - [x] Added a persisted single-process local worker fallback that resumes pending/running retraining records after API restart when Celery/Redis is unavailable.
 - [ ] Redis/Celery is still required for scalable multi-worker production execution; no Redis service is available on this host.

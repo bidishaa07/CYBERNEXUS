@@ -13,7 +13,7 @@ pip install -r backend/requirements.txt
 
 # Backend, from the repository root
 $env:PYTHONPATH=(Get-Location).Path
-python -m uvicorn backend.app.main:app --host 127.0.0.1 --port 8001
+python -m uvicorn backend.app.main:app --host 127.0.0.1 --port 8000
 
 # Frontend, in another terminal
 cd frontend
@@ -21,7 +21,7 @@ npm install
 npm run dev -- --host 0.0.0.0
 ```
 
-Open `http://localhost:5173`. The API is available at `http://127.0.0.1:8001`; API documentation is at `/docs`.
+Open `http://localhost:5173`. The API is available at `http://127.0.0.1:8000`; API documentation is at `/docs`.
 
 The default database is SQLite. Set `DATABASE_URL` to a PostgreSQL SQLAlchemy URL for production. Existing schema changes are applied by the migration runner in `backend/migrations/`.
 
@@ -50,13 +50,13 @@ LLM_BASE_URL=https://api.moonshot.ai/v1
 
 Provider status endpoints:
 
-- `GET http://127.0.0.1:8001/api/providers/google-safe-browsing/status`
-- `POST http://127.0.0.1:8001/api/providers/google-safe-browsing/verify`
-- `GET http://127.0.0.1:8001/api/providers/virustotal/status`
-- `GET http://127.0.0.1:8001/api/providers/external/status`
-- `GET http://127.0.0.1:8001/api/providers/urlhaus/status`
-- `GET http://127.0.0.1:8001/api/llm/status`
-- `POST http://127.0.0.1:8001/api/llm/verify`
+- `GET http://127.0.0.1:8000/api/providers/google-safe-browsing/status`
+- `POST http://127.0.0.1:8000/api/providers/google-safe-browsing/verify`
+- `GET http://127.0.0.1:8000/api/providers/virustotal/status`
+- `GET http://127.0.0.1:8000/api/providers/external/status`
+- `GET http://127.0.0.1:8000/api/providers/urlhaus/status`
+- `GET http://127.0.0.1:8000/api/llm/status`
+- `POST http://127.0.0.1:8000/api/llm/verify`
 
 An absent or failed provider is represented as unavailable/unknown. It is never converted into a clean verdict. URL submissions to VirusTotal require explicit confirmation and are not performed during ordinary scans.
 
@@ -107,12 +107,12 @@ cd frontend
 npm run build
 ```
 
-The current verified baseline is recorded in [`progress.md`](progress.md). The latest local verification is `96 passed, 1 skipped` for the backend suite, with frontend typechecking, the component test, and the production build also passing. The Phase 5 live certificate check was verified on scan `106` with certificate risk `25/100`, TLS grade `A`, and a bounded `+6` overall-risk influence.
+The current verified baseline is recorded in [`progress.md`](progress.md). The latest local verification is `170 passed, 1 skipped` for the backend suite; frontend tests report `4 passed`, and frontend typechecking and the production build also pass.
 
 Redirect endpoints:
 
-- `GET http://127.0.0.1:8001/api/scans/{scan_id}/redirects`
-- `GET http://127.0.0.1:8001/api/scans/{scan_id}/redirects/{sequence}`
+- `GET http://127.0.0.1:8000/api/scans/{scan_id}/redirects`
+- `GET http://127.0.0.1:8000/api/scans/{scan_id}/redirects/{sequence}`
 
 Redirect scoring is intentionally separate from the overall score. Cross-domain movement alone is a warning signal, not proof of maliciousness; confirmed destination findings, brand impersonation, HTTPS downgrade, and excessive depth contribute explainable points. Unavailable destination intelligence is reported as missing and does not create a clean verdict.
 
@@ -256,6 +256,22 @@ Phase 6 preserves the existing TF-IDF + Logistic Regression classifier while add
 - The ML management panel shows training runs and permits an administrator to start retraining from approved datasets.
 - Verification: controlled retraining and registry tests pass; full backend suite is 133 passed, 1 skipped; frontend typecheck, component tests and production build pass. Browser E2E remains a separate command requiring a running browser fixture.
 - Live local verification: cleaned approved dataset merged-managed-dataset-v1 (98,778 records) produced and deployed model retrain-3-20261108070111. The active API reports both model and dataset versions, with health status OK. Browser Chromium E2E passed 1 test.
+
+## Threat correlation and website security assessment
+
+The dashboard provides separate `Threat correlation` and `Website security` views. Threat correlation includes normalized indicators, infrastructure relationships, message similarity, incidents, campaigns, investigation graphs, timelines and evidence-grounded summaries. Website security includes standardized findings, filtering, remediation history, persisted reports, passive/active assessment controls and explicit authorization records.
+
+Active assessment execution requires an approved, unexpired, in-scope authorization. Production deployments must use verified OIDC identities and administrator roles; the local development fallback is not an authorization mechanism for production.
+
+The scan history endpoint defaults to returning up to 1,000 persisted scans. The current local database contains 119 retained user scan records after removing confirmed synthetic `.example` records generated by automated tests. The database file remains local and ignored by Git.
+
+## Current verification
+
+- Backend regression suite: `170 passed, 1 skipped`.
+- Frontend component tests: `4 passed`.
+- Frontend TypeScript check: passed.
+- Frontend production build: passed.
+- Local services: backend `http://127.0.0.1:8000`, frontend `http://127.0.0.1:5173`.
 
 ## Structure
 
