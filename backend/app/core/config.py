@@ -110,6 +110,17 @@ class Settings(BaseSettings):
     message_similarity_threshold: float = 0.62
     message_similarity_max_pairs: int = 2000
     campaign_grouping_threshold: float = 0.65
+    blockchain_rpc_url: str = ""
+    blockchain_network_key: str = ""
+    blockchain_network_name: str = ""
+    blockchain_chain_id: str = ""
+    blockchain_contract_address: str = ""
+    blockchain_private_key: str = ""
+    blockchain_timeout_seconds: float = 8
+    blockchain_transaction_timeout_seconds: float = 120
+    blockchain_confirmations: int = 2
+    blockchain_max_retries: int = 2
+    blockchain_abi_path: str = "backend/app/artifacts/ThreatIntelligence.json"
     hsts_preload_api_url: str = "https://hstspreload.org/api/v2/status?domain={domain}"
     hsts_preload_timeout_seconds: float = 5
     disclosure_vulnerability_lookup_enabled: bool = True

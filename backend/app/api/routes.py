@@ -2,13 +2,14 @@ import hashlib
 import json
 import re
 import secrets
+import httpx
 from datetime import datetime, timezone
 from pathlib import Path
 from fastapi import APIRouter, Depends, HTTPException, Header, UploadFile, File, BackgroundTasks, Query, Response
 from sqlalchemy import asc, case, cast, desc, func, or_, String as SQLString
 from sqlalchemy.orm import Session
 from backend.app.db.session import get_db, SessionLocal
-from backend.app.models.models import Scan, CommunityReport, DomainIntelligence, ProviderVerdict, ThreatIndicator, RedirectHop, BrandRegistry, BrandVerificationEvidence, BrandVerificationChallenge, BrandVerificationAudit, BrandLogoAsset, BrandImageReference, WebsiteImageCandidate, ImageComparison, CertificateRecord, CertificateChainLink, CertificateValidationResult, CertificateRevocationResult, CertificateRevocationJob, CertificateTransparencyEntry, CertificateTransparencyAnomaly, CertificateRiskAssessment, EmailAnalysis, EmailHeader, EmailAuthenticationResult, EmailHeaderAnomaly, EmailRawMessage, EmailSmtpContext, EmailVerificationRun, MessageAnalysisRecord, MessageIndicatorResult, MessageDomainSpoofingFinding, EmailProviderRegistry, ContactRiskAssessment, IntelligenceVerification, BackgroundTaskRun, MessageAnalysisMetadata, MessageContent, MessageAnalysisEvent, AppUser, LegacyIdentityLink, MessageReview, MessageReviewAudit, MessageReviewFeedback, MLDatasetVersion, MLModelVersion, MLDeploymentHistory, MLTrainingRun, SecurityAssessment, SecurityFinding, RemediationRecord, SecurityAuthorization, AssessmentEvent
+from backend.app.models.models import Scan, CommunityReport, DomainIntelligence, ProviderVerdict, ThreatIndicator, RedirectHop, BrandRegistry, BrandVerificationEvidence, BrandVerificationChallenge, BrandVerificationAudit, BrandLogoAsset, BrandImageReference, WebsiteImageCandidate, ImageComparison, CertificateRecord, CertificateChainLink, CertificateValidationResult, CertificateRevocationResult, CertificateRevocationJob, CertificateTransparencyEntry, CertificateTransparencyAnomaly, CertificateRiskAssessment, EmailAnalysis, EmailHeader, EmailAuthenticationResult, EmailHeaderAnomaly, EmailRawMessage, EmailSmtpContext, EmailVerificationRun, MessageAnalysisRecord, MessageIndicatorResult, MessageDomainSpoofingFinding, EmailProviderRegistry, ContactRiskAssessment, IntelligenceVerification, BackgroundTaskRun, MessageAnalysisMetadata, MessageContent, MessageAnalysisEvent, AppUser, LegacyIdentityLink, MessageReview, MessageReviewAudit, MessageReviewFeedback, MLDatasetVersion, MLModelVersion, MLDeploymentHistory, MLTrainingRun, SecurityAssessment, SecurityFinding, RemediationRecord, SecurityAuthorization, AssessmentEvent, ThreatIntelligenceReport, ReportRevision, WalletChallenge, WalletIdentity, DigitalSignature
 from backend.app.schemas.schemas import ScanRequest, ReportRequest
 from backend.app.services.scanner import scan
 from backend.app.services.scanner import _destination_providers
@@ -49,6 +50,11 @@ from backend.app.services.security_authorization import create as create_securit
 from backend.app.engines.ca_reputation import configuration_status as ca_reputation_configuration
 from backend.app.services.message_reports import bundle as build_message_report, csv_bytes as report_csv_bytes, pdf_bytes as report_pdf_bytes
 from backend.app.services.security_assessment_reports import build_report as build_security_assessment_report, csv_bytes as security_report_csv_bytes, json_bytes as security_report_json_bytes, pdf_bytes as security_report_pdf_bytes, record_generation as record_security_report_generation, history as security_report_history, FORMATS as SECURITY_REPORT_FORMATS
+from backend.app.services.decentralized_threat_intelligence import create_report as create_threat_report, serialize_report as serialize_threat_report, serialize_revision as serialize_threat_revision, get_owned_report as get_owned_threat_report, add_revision as add_threat_revision, commitment_for_revision as threat_commitment_for_revision, verify_local_commitment, provenance as threat_provenance, validation_history as threat_validation_history, blockchain_metadata as threat_blockchain_metadata, calculate_commitment
+from backend.app.services.ledger import ledger_checkpoint, verify_ledger
+from backend.app.services.blockchain_anchor import verify_external_receipt, verify_configuration as blockchain_configuration_status
+from backend.app.services.evm_blockchain import EVMBlockchainAdapter
+from backend.app.services.wallet_signatures import ownership_challenge, verify_ownership, signature_challenge, verify_signature
 from backend.app.services.ml_registry import validate_dataset, artifact_metadata, _safe_artifact, POINTER, MODEL_ROOT
 from backend.app.workers import tasks as worker_tasks
 from backend.app.services.local_ml_worker import submit as submit_local_retraining
@@ -1226,6 +1232,136 @@ def report_commitment(report_id: int, db: Session = Depends(get_db)):
     row=db.get(CommunityReport, report_id)
     if not row: raise HTTPException(404, "Report not found")
     return commitment({"id":row.id,"url":row.url,"reason":row.reason,"details":row.details,"status":row.status,"created_at":row.created_at})
+
+# Phase 6.1 decentralized threat-intelligence report architecture. These
+# endpoints create and verify local commitments only; they do not submit to a
+# blockchain and never expose private keys or confidential report data publicly.
+@router.post("/threat-intelligence/reports")
+def create_threat_intelligence_report(payload: dict, principal: Principal = Depends(get_current_principal), db: Session = Depends(get_db)):
+    try:
+        row = create_threat_report(db, principal.user_id, payload)
+    except ValueError as exc:
+        db.rollback(); raise HTTPException(400, str(exc)) from exc
+    return serialize_threat_report(db, row)
+
+@router.get("/threat-intelligence/reports")
+def list_threat_intelligence_reports(limit: int = Query(50, ge=1, le=100), offset: int = Query(0, ge=0), principal: Principal = Depends(get_current_principal), db: Session = Depends(get_db)):
+    rows = db.query(ThreatIntelligenceReport).filter(ThreatIntelligenceReport.owner_user_id.in_((principal.user_id, *principal.legacy_ids))).order_by(ThreatIntelligenceReport.updated_at.desc()).offset(offset).limit(limit).all()
+    return {"items": [serialize_threat_report(db, row, include_revisions=False) for row in rows], "offset": offset, "limit": limit}
+
+@router.get("/threat-intelligence/reports/{report_id}")
+def get_threat_intelligence_report(report_id: int, principal: Principal = Depends(get_current_principal), db: Session = Depends(get_db)):
+    try:
+        row = get_owned_threat_report(db, report_id, principal, principal.role == "admin")
+    except LookupError as exc: raise HTTPException(404, str(exc)) from exc
+    return serialize_threat_report(db, row)
+
+@router.post("/threat-intelligence/reports/{report_id}/revisions")
+def create_threat_intelligence_revision(report_id: int, payload: dict, principal: Principal = Depends(get_current_principal), db: Session = Depends(get_db)):
+    try:
+        report = get_owned_threat_report(db, report_id, principal, principal.role == "admin")
+        revision = add_threat_revision(db, report, principal, payload)
+    except LookupError as exc: raise HTTPException(404, str(exc)) from exc
+    except ValueError as exc: db.rollback(); raise HTTPException(400, str(exc)) from exc
+    return {"report": serialize_threat_report(db, report), "revision_id": revision.id}
+
+@router.get("/threat-intelligence/reports/{report_id}/revisions/{revision_id}")
+def get_threat_intelligence_revision(report_id: int, revision_id: int, principal: Principal = Depends(get_current_principal), db: Session = Depends(get_db)):
+    try: report = get_owned_threat_report(db, report_id, principal, principal.role == "admin")
+    except LookupError as exc: raise HTTPException(404, str(exc)) from exc
+    revision = db.query(ReportRevision).filter_by(id=revision_id, report_id=report.id).first()
+    if not revision: raise HTTPException(404, "revision not found")
+    return {"report": {"id": report.id, "report_key": report.report_key, "title": report.title}, "revision": serialize_threat_revision(db, revision), "canonical_payload": revision.canonical_payload}
+
+@router.post("/threat-intelligence/reports/{report_id}/revisions/{revision_id}/commitment/verify")
+def verify_threat_intelligence_commitment(report_id: int, revision_id: int, principal: Principal = Depends(get_current_principal), db: Session = Depends(get_db)):
+    try:
+        report = get_owned_threat_report(db, report_id, principal, principal.role == "admin")
+        return verify_local_commitment(db, report, revision_id, principal.user_id)
+    except LookupError as exc: raise HTTPException(404, str(exc)) from exc
+
+@router.get("/threat-intelligence/reports/{report_id}/provenance")
+def get_threat_intelligence_provenance(report_id: int, principal: Principal = Depends(get_current_principal), db: Session = Depends(get_db)):
+    try: report = get_owned_threat_report(db, report_id, principal, principal.role == "admin")
+    except LookupError as exc: raise HTTPException(404, str(exc)) from exc
+    return {"items": threat_provenance(db, report.id)}
+
+@router.get("/threat-intelligence/reports/{report_id}/validation")
+def get_threat_intelligence_validation_history(report_id: int, principal: Principal = Depends(get_current_principal), db: Session = Depends(get_db)):
+    try: report = get_owned_threat_report(db, report_id, principal, principal.role == "admin")
+    except LookupError as exc: raise HTTPException(404, str(exc)) from exc
+    return {"items": threat_validation_history(db, report.id)}
+
+@router.get("/threat-intelligence/reports/{report_id}/blockchain")
+def get_threat_intelligence_blockchain_metadata(report_id: int, principal: Principal = Depends(get_current_principal), db: Session = Depends(get_db)):
+    try: report = get_owned_threat_report(db, report_id, principal, principal.role == "admin")
+    except LookupError as exc: raise HTTPException(404, str(exc)) from exc
+    return {"items": threat_blockchain_metadata(db, report.id), "on_chain_status": "NOT_SUBMITTED"}
+
+@router.get("/threat-intelligence/ledger/verify")
+def verify_threat_intelligence_ledger(principal: Principal = Depends(get_current_principal), _: None = Depends(admin_only), db: Session = Depends(get_db)):
+    return ledger_checkpoint(db)
+
+@router.post("/threat-intelligence/reports/{report_id}/revisions/{revision_id}/blockchain/verify-receipt")
+def verify_threat_intelligence_blockchain_receipt(report_id: int, revision_id: int, payload: dict, principal: Principal = Depends(get_current_principal), _: None = Depends(admin_only), db: Session = Depends(get_db)):
+    try: report = get_owned_threat_report(db, report_id, principal, True)
+    except LookupError as exc: raise HTTPException(404, str(exc)) from exc
+    revision = db.query(ReportRevision).filter_by(id=revision_id, report_id=report.id).first()
+    if not revision: raise HTTPException(404, "revision not found")
+    try: return verify_external_receipt(db, revision, payload.get("transaction_hash"), principal.user_id)
+    except (ValueError, httpx.HTTPError) as exc:
+        db.rollback(); raise HTTPException(502, "blockchain receipt verification failed") from exc
+
+@router.get("/threat-intelligence/blockchain/status")
+def threat_intelligence_blockchain_status(principal: Principal = Depends(get_current_principal), _: None = Depends(admin_only)):
+    return blockchain_configuration_status()
+
+@router.post("/threat-intelligence/wallet/challenges")
+def create_wallet_ownership_challenge(payload: dict, principal: Principal = Depends(get_current_principal), db: Session = Depends(get_db)):
+    try: return ownership_challenge(db, principal, payload.get("address"), str(payload.get("action") or "WALLET_OWNERSHIP"))
+    except ValueError as exc: raise HTTPException(400, str(exc)) from exc
+
+@router.post("/threat-intelligence/wallet/challenges/{challenge_id}/verify")
+def verify_wallet_ownership_challenge(challenge_id: str, payload: dict, principal: Principal = Depends(get_current_principal), db: Session = Depends(get_db)):
+    try: return verify_ownership(db, principal, challenge_id, payload.get("address"), payload.get("signature"), payload.get("chain_id"))
+    except LookupError as exc: raise HTTPException(404, str(exc)) from exc
+    except (ValueError, TypeError) as exc: db.rollback(); raise HTTPException(400, str(exc)) from exc
+
+@router.post("/threat-intelligence/reports/{report_id}/revisions/{revision_id}/signature/challenge")
+def create_report_signature_challenge(report_id: int, revision_id: int, payload: dict, principal: Principal = Depends(get_current_principal), db: Session = Depends(get_db)):
+    try: report = get_owned_threat_report(db, report_id, principal, principal.role == "admin")
+    except LookupError as exc: raise HTTPException(404, str(exc)) from exc
+    revision=db.query(ReportRevision).filter_by(id=revision_id,report_id=report.id).first()
+    if not revision: raise HTTPException(404,"revision not found")
+    try: return signature_challenge(db, principal, report, revision, payload.get("address"))
+    except (ValueError, PermissionError) as exc: raise HTTPException(403, str(exc)) from exc
+
+@router.post("/threat-intelligence/signatures/{challenge_id}/verify")
+def verify_report_signature(challenge_id: str, payload: dict, principal: Principal = Depends(get_current_principal), db: Session = Depends(get_db)):
+    try: return verify_signature(db, principal, challenge_id, payload.get("signature"))
+    except LookupError as exc: raise HTTPException(404, str(exc)) from exc
+    except (ValueError, PermissionError) as exc: db.rollback(); raise HTTPException(400, str(exc)) from exc
+
+@router.post("/threat-intelligence/reports/{report_id}/revisions/{revision_id}/blockchain/submit")
+def submit_threat_intelligence_blockchain_revision(report_id: int, revision_id: int, payload: dict | None = None, principal: Principal = Depends(get_current_principal), _: None = Depends(admin_only), db: Session = Depends(get_db)):
+    try: report = get_owned_threat_report(db, report_id, principal, True)
+    except LookupError as exc: raise HTTPException(404, str(exc)) from exc
+    revision = db.query(ReportRevision).filter_by(id=revision_id, report_id=report.id).first()
+    if not revision: raise HTTPException(404, "revision not found")
+    try:
+        adapter = EVMBlockchainAdapter()
+        return adapter.submit_revision(db, report, revision, (payload or {}).get("metadata") or "")
+    except Exception as exc:
+        db.rollback(); raise HTTPException(503, "EVM blockchain submission unavailable") from exc
+
+@router.get("/threat-intelligence/blockchain/transactions/{transaction_id}")
+def refresh_threat_intelligence_transaction(transaction_id: int, principal: Principal = Depends(get_current_principal), _: None = Depends(admin_only), db: Session = Depends(get_db)):
+    try:
+        adapter = EVMBlockchainAdapter()
+        return adapter.refresh_transaction(db, transaction_id)
+    except LookupError as exc: raise HTTPException(404, str(exc)) from exc
+    except Exception as exc:
+        db.rollback(); raise HTTPException(503, "EVM transaction status unavailable") from exc
 
 @router.post("/reports/{report_id}/moderate")
 def moderate_report(report_id: int, status: str, db: Session = Depends(get_db), _: None = Depends(admin_only)):

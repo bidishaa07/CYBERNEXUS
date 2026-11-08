@@ -1,5 +1,5 @@
 from datetime import datetime, timezone
-from sqlalchemy import Column, DateTime, Integer, String, Text, Float, ForeignKey, UniqueConstraint, LargeBinary
+from sqlalchemy import Column, DateTime, Integer, String, Text, Float, ForeignKey, UniqueConstraint, LargeBinary, event
 from backend.app.db.session import Base
 
 class Scan(Base):
@@ -557,3 +557,224 @@ class MLDeploymentHistory(Base):
 class MLTrainingRun(Base):
     __tablename__ = "ml_training_runs"
     id=Column(Integer,primary_key=True); dataset_version_id=Column(Integer,ForeignKey("ml_dataset_versions.id"),index=True,nullable=False); model_version_id=Column(Integer,ForeignKey("ml_model_versions.id"),index=True); status=Column(String(30),nullable=False,default="PENDING"); metrics_json=Column(Text,default="{}"); error=Column(Text); started_at=Column(DateTime); completed_at=Column(DateTime); created_by=Column(String(512),nullable=False); created_at=Column(DateTime,default=lambda:datetime.now(timezone.utc))
+
+class ThreatIntelligenceReport(Base):
+    __tablename__ = "threat_intelligence_reports"
+    id=Column(Integer,primary_key=True)
+    report_key=Column(String(160),unique=True,index=True,nullable=False)
+    owner_user_id=Column(String(160),index=True,nullable=False)
+    title=Column(String(255),nullable=False)
+    description=Column(Text,default="")
+    status=Column(String(30),nullable=False,default="DRAFT",index=True)
+    visibility=Column(String(20),nullable=False,default="PRIVATE")
+    published_revision_id=Column(Integer,index=True)
+    created_at=Column(DateTime,default=lambda:datetime.now(timezone.utc),index=True)
+    updated_at=Column(DateTime,default=lambda:datetime.now(timezone.utc),index=True)
+
+class ReportRevision(Base):
+    __tablename__ = "threat_report_revisions"
+    id=Column(Integer,primary_key=True)
+    report_id=Column(Integer,ForeignKey("threat_intelligence_reports.id"),index=True,nullable=False)
+    revision_number=Column(Integer,nullable=False)
+    previous_revision_id=Column(Integer,ForeignKey("threat_report_revisions.id"),index=True)
+    canonical_report_hash=Column(String(64),nullable=False,index=True)
+    hash_algorithm=Column(String(30),nullable=False,default="SHA-256")
+    canonicalization_version=Column(String(30),nullable=False,default="v1")
+    canonical_payload=Column(Text,nullable=False)
+    revision_metadata_json=Column(Text,default="{}")
+    author_user_id=Column(String(160),nullable=False,index=True)
+    validation_state=Column(String(30),nullable=False,default="DRAFT",index=True)
+    created_at=Column(DateTime,default=lambda:datetime.now(timezone.utc),index=True)
+    published_at=Column(DateTime)
+    __table_args__=(UniqueConstraint("report_id","revision_number",name="uq_threat_report_revision_number"),)
+
+class ReportCommitment(Base):
+    __tablename__ = "threat_report_commitments"
+    id=Column(Integer,primary_key=True)
+    revision_id=Column(Integer,ForeignKey("threat_report_revisions.id"),unique=True,index=True,nullable=False)
+    commitment=Column(String(64),nullable=False,index=True)
+    hash_algorithm=Column(String(30),nullable=False,default="SHA-256")
+    domain_separator=Column(String(120),nullable=False)
+    commitment_scope=Column(String(30),nullable=False,default="LOCAL")
+    created_at=Column(DateTime,default=lambda:datetime.now(timezone.utc),index=True)
+
+class BlockchainNetwork(Base):
+    __tablename__ = "blockchain_networks"
+    id=Column(Integer,primary_key=True)
+    network_key=Column(String(120),unique=True,index=True,nullable=False)
+    name=Column(String(120),nullable=False)
+    chain_id=Column(String(120))
+    rpc_url=Column(String(2048))
+    contract_address=Column(String(255))
+    status=Column(String(30),nullable=False,default="CONFIGURED")
+    created_at=Column(DateTime,default=lambda:datetime.now(timezone.utc))
+
+class BlockchainTransaction(Base):
+    __tablename__ = "blockchain_transactions"
+    id=Column(Integer,primary_key=True)
+    network_id=Column(Integer,ForeignKey("blockchain_networks.id"),index=True,nullable=False)
+    revision_id=Column(Integer,ForeignKey("threat_report_revisions.id"),index=True,nullable=False)
+    tx_hash=Column(String(255),index=True)
+    status=Column(String(30),nullable=False,default="NOT_SUBMITTED")
+    block_number=Column(Integer)
+    confirmations=Column(Integer,default=0)
+    submitted_at=Column(DateTime)
+    verified_at=Column(DateTime)
+    error=Column(Text)
+    metadata_json=Column(Text,default="{}")
+    commitment_id=Column(String(160),index=True)
+    report_id=Column(Integer,ForeignKey("threat_intelligence_reports.id"),index=True)
+    block_hash=Column(String(255))
+    gas_used=Column(Integer)
+    effective_gas_price=Column(String(80))
+    confirmation_status=Column(String(30),default="PENDING")
+    last_checked_at=Column(DateTime)
+    __table_args__=(UniqueConstraint("network_id","revision_id",name="uq_blockchain_tx_revision_network"),)
+
+class WalletIdentity(Base):
+    __tablename__ = "wallet_identities"
+    id=Column(Integer,primary_key=True)
+    owner_user_id=Column(String(160),index=True,nullable=False)
+    network_id=Column(Integer,ForeignKey("blockchain_networks.id"),index=True,nullable=False)
+    address=Column(String(255),nullable=False)
+    verification_status=Column(String(30),nullable=False,default="UNVERIFIED")
+    first_verified_at=Column(DateTime)
+    created_at=Column(DateTime,default=lambda:datetime.now(timezone.utc))
+    __table_args__=(UniqueConstraint("network_id","address",name="uq_wallet_network_address"),)
+
+class DigitalSignature(Base):
+    __tablename__ = "threat_report_signatures"
+    id=Column(Integer,primary_key=True)
+    report_id=Column(Integer,ForeignKey("threat_intelligence_reports.id"),index=True)
+    revision_id=Column(Integer,ForeignKey("threat_report_revisions.id"),index=True,nullable=False)
+    wallet_id=Column(Integer,ForeignKey("wallet_identities.id"),index=True)
+    algorithm=Column(String(60),nullable=False)
+    signature=Column(Text,nullable=False)
+    verification_status=Column(String(30),nullable=False,default="UNVERIFIED")
+    signature_type=Column(String(40),nullable=False,default="EIP712")
+    purpose=Column(String(80),nullable=False,default="REPORT_REVISION")
+    chain_id=Column(String(80))
+    nonce=Column(String(160),index=True)
+    expires_at=Column(DateTime)
+    verified_at=Column(DateTime)
+    evidence_json=Column(Text,default="{}")
+    created_at=Column(DateTime,default=lambda:datetime.now(timezone.utc))
+
+class WalletChallenge(Base):
+    __tablename__ = "wallet_challenges"
+    id=Column(Integer,primary_key=True)
+    challenge_id=Column(String(160),unique=True,index=True,nullable=False)
+    owner_user_id=Column(String(160),index=True,nullable=False)
+    wallet_address=Column(String(255),nullable=False,index=True)
+    domain=Column(String(255),nullable=False)
+    action=Column(String(80),nullable=False)
+    chain_id=Column(String(80),nullable=False)
+    nonce=Column(String(160),unique=True,index=True,nullable=False)
+    message=Column(Text,nullable=False)
+    typed_data_json=Column(Text)
+    report_id=Column(Integer,ForeignKey("threat_intelligence_reports.id"),index=True)
+    revision_id=Column(Integer,ForeignKey("threat_report_revisions.id"),index=True)
+    report_hash=Column(String(64))
+    expires_at=Column(DateTime,nullable=False,index=True)
+    consumed_at=Column(DateTime)
+    created_at=Column(DateTime,default=lambda:datetime.now(timezone.utc),index=True)
+
+class EvidenceObject(Base):
+    __tablename__ = "threat_evidence_objects"
+    id=Column(Integer,primary_key=True)
+    owner_user_id=Column(String(160),index=True,nullable=False)
+    object_hash=Column(String(64),index=True,nullable=False)
+    hash_algorithm=Column(String(30),nullable=False,default="SHA-256")
+    storage_uri=Column(String(2048))
+    content_type=Column(String(160))
+    size_bytes=Column(Integer)
+    metadata_json=Column(Text,default="{}")
+    created_at=Column(DateTime,default=lambda:datetime.now(timezone.utc))
+    __table_args__=(UniqueConstraint("owner_user_id","object_hash",name="uq_threat_evidence_owner_hash"),)
+
+class EvidenceReference(Base):
+    __tablename__ = "threat_evidence_references"
+    id=Column(Integer,primary_key=True)
+    revision_id=Column(Integer,ForeignKey("threat_report_revisions.id"),index=True,nullable=False)
+    evidence_object_id=Column(Integer,ForeignKey("threat_evidence_objects.id"),index=True,nullable=False)
+    reference_type=Column(String(80),nullable=False,default="SUPPORTING")
+    description=Column(Text,default="")
+    created_at=Column(DateTime,default=lambda:datetime.now(timezone.utc))
+    __table_args__=(UniqueConstraint("revision_id","evidence_object_id","reference_type",name="uq_threat_evidence_reference"),)
+
+class ProvenanceEvent(Base):
+    __tablename__ = "threat_provenance_events"
+    id=Column(Integer,primary_key=True)
+    report_id=Column(Integer,ForeignKey("threat_intelligence_reports.id"),index=True,nullable=False)
+    revision_id=Column(Integer,ForeignKey("threat_report_revisions.id"),index=True)
+    actor_user_id=Column(String(160),index=True,nullable=False)
+    event_type=Column(String(80),nullable=False)
+    details_json=Column(Text,default="{}")
+    created_at=Column(DateTime,default=lambda:datetime.now(timezone.utc),index=True)
+
+class ValidationRecord(Base):
+    __tablename__ = "threat_validation_records"
+    id=Column(Integer,primary_key=True)
+    report_id=Column(Integer,ForeignKey("threat_intelligence_reports.id"),index=True,nullable=False)
+    revision_id=Column(Integer,ForeignKey("threat_report_revisions.id"),index=True,nullable=False)
+    validator_user_id=Column(String(160),index=True,nullable=False)
+    validation_state=Column(String(30),nullable=False)
+    notes=Column(Text,default="")
+    created_at=Column(DateTime,default=lambda:datetime.now(timezone.utc),index=True)
+
+class DisputeRecord(Base):
+    __tablename__ = "threat_dispute_records"
+    id=Column(Integer,primary_key=True)
+    report_id=Column(Integer,ForeignKey("threat_intelligence_reports.id"),index=True,nullable=False)
+    revision_id=Column(Integer,ForeignKey("threat_report_revisions.id"),index=True)
+    opened_by=Column(String(160),index=True,nullable=False)
+    status=Column(String(30),nullable=False,default="OPEN")
+    reason=Column(Text,nullable=False)
+    resolution=Column(Text)
+    created_at=Column(DateTime,default=lambda:datetime.now(timezone.utc),index=True)
+    resolved_at=Column(DateTime)
+
+class AppendOnlyLedgerEvent(Base):
+    __tablename__ = "threat_append_only_ledger_events"
+    id=Column(Integer,primary_key=True)
+    event_type=Column(String(80),nullable=False)
+    report_id=Column(Integer,ForeignKey("threat_intelligence_reports.id"),index=True)
+    revision_id=Column(Integer,ForeignKey("threat_report_revisions.id"),index=True)
+    actor_user_id=Column(String(160),nullable=False)
+    payload_hash=Column(String(64),nullable=False)
+    previous_event_hash=Column(String(64))
+    event_hash=Column(String(64),unique=True,index=True,nullable=False)
+    payload_json=Column(Text,nullable=False)
+    sequence_number=Column(Integer,index=True,nullable=False,default=0)
+    hash_algorithm=Column(String(30),nullable=False,default="SHA-256")
+    hash_version=Column(String(30),nullable=False,default="v2")
+    evidence_refs_json=Column(Text,default="[]")
+    dedupe_key=Column(String(255),unique=True,index=True)
+    occurred_at=Column(DateTime,default=lambda:datetime.now(timezone.utc),index=True)
+
+class LedgerSequenceState(Base):
+    __tablename__ = "threat_ledger_sequence_state"
+    id=Column(Integer,primary_key=True)
+    next_sequence=Column(Integer,nullable=False,default=1)
+    updated_at=Column(DateTime,default=lambda:datetime.now(timezone.utc))
+
+@event.listens_for(Base, "before_update", propagate=True)
+def _prevent_ledger_update(mapper, connection, target):
+    if isinstance(target, AppendOnlyLedgerEvent) and not getattr(target, "_ledger_initializing", False):
+        raise ValueError("append-only ledger events cannot be updated")
+
+@event.listens_for(Base, "before_delete", propagate=True)
+def _prevent_ledger_delete(mapper, connection, target):
+    if isinstance(target, AppendOnlyLedgerEvent):
+        raise ValueError("append-only ledger events cannot be deleted")
+
+class IntegrityVerificationRecord(Base):
+    __tablename__ = "threat_integrity_verifications"
+    id=Column(Integer,primary_key=True)
+    report_id=Column(Integer,ForeignKey("threat_intelligence_reports.id"),index=True,nullable=False)
+    revision_id=Column(Integer,ForeignKey("threat_report_revisions.id"),index=True,nullable=False)
+    commitment=Column(String(64),nullable=False)
+    verification_source=Column(String(120),nullable=False)
+    status=Column(String(30),nullable=False)
+    details_json=Column(Text,default="{}")
+    verified_at=Column(DateTime,default=lambda:datetime.now(timezone.utc),index=True)

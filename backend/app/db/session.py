@@ -39,3 +39,25 @@ def run_migrations():
                     message = str(exc).lower()
                     if "duplicate column" not in message and "already exists" not in message:
                         raise
+        _install_ledger_guards(connection)
+
+def _install_ledger_guards(connection):
+    """Install database-side append-only guards after migrations.
+
+    The application ORM guards are defense in depth. These triggers also stop
+    ordinary application-role UPDATE/DELETE statements. A production DBA must
+    additionally run the database-specific permission hardening for the app
+    role; the database owner/migration role remains trusted.
+    """
+    dialect = connection.dialect.name
+    if dialect == "sqlite":
+        connection.exec_driver_sql("DROP TRIGGER IF EXISTS trg_threat_ledger_no_update")
+        connection.exec_driver_sql("DROP TRIGGER IF EXISTS trg_threat_ledger_no_delete")
+        connection.exec_driver_sql("CREATE TRIGGER trg_threat_ledger_no_update BEFORE UPDATE ON threat_append_only_ledger_events WHEN OLD.event_hash <> 'pending' BEGIN SELECT RAISE(ABORT, 'append-only ledger events cannot be updated'); END")
+        connection.exec_driver_sql("CREATE TRIGGER trg_threat_ledger_no_delete BEFORE DELETE ON threat_append_only_ledger_events BEGIN SELECT RAISE(ABORT, 'append-only ledger events cannot be deleted'); END")
+    elif dialect == "postgresql":
+        connection.exec_driver_sql("CREATE OR REPLACE FUNCTION threat_ledger_immutable() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN IF TG_OP = 'UPDATE' AND OLD.event_hash = 'pending' THEN RETURN NEW; END IF; RAISE EXCEPTION 'append-only ledger events cannot be changed'; END; $$")
+        connection.exec_driver_sql("DROP TRIGGER IF EXISTS trg_threat_ledger_no_update ON threat_append_only_ledger_events")
+        connection.exec_driver_sql("DROP TRIGGER IF EXISTS trg_threat_ledger_no_delete ON threat_append_only_ledger_events")
+        connection.exec_driver_sql("CREATE TRIGGER trg_threat_ledger_no_update BEFORE UPDATE ON threat_append_only_ledger_events FOR EACH ROW EXECUTE FUNCTION threat_ledger_immutable()")
+        connection.exec_driver_sql("CREATE TRIGGER trg_threat_ledger_no_delete BEFORE DELETE ON threat_append_only_ledger_events FOR EACH ROW EXECUTE FUNCTION threat_ledger_immutable()")

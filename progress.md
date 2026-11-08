@@ -17,6 +17,12 @@ Last verified: 2026-11-08
 - Kimi: `CONFIGURED_NOT_TESTED`; live verification remains blocked by HTTP 429.
 - TLS Phase 5 live certificate risk verification: certificate score and bounded overall-risk influence verified on scan `106`.
 - `.env` is ignored by Git and was not committed; the repository is connected to `quantum-nil/CYBERNEXUS`.
+- Phase 6.1 targeted tests: `4 passed`; full backend regression suite: `174 passed, 1 skipped`.
+- Phase 6.1 blockchain integration is intentionally not configured; no transaction or smart-contract deployment is claimed.
+- Phase 6.2 ledger verification: full backend suite `177 passed, 1 skipped`; live local ledger chain verified 29 events successfully and remains `NOT_ANCHORED`.
+- Hardhat contract build/tests: compilation passed and contract tests `3 passing`; Sepolia deployment stopped before transaction submission because the deployer wallet had zero Sepolia ETH. No address claimed.
+- Current configured address check: Sepolia RPC reachable and chain ID matched, but `eth_getCode` returned no bytecode; backend reports `INVALID_CONFIGURATION` rather than treating the address as a contract.
+- Phase 6.3 adapter tests cover secret-safe status validation and SHA-256 commitment encoding; no transaction was submitted because the configured address has no bytecode.
 
 This checklist records repository implementation and observed runtime state. A checked item means it was implemented and verified locally or through a live provider check. An unchecked item is incomplete, credential-dependent, or not yet verified.
 
@@ -29,6 +35,48 @@ This checklist records repository implementation and observed runtime state. A c
 - [x] Frontend production build succeeds with Vite.
 - [x] `.env` is ignored by Git.
 - [x] Credentials are kept out of frontend source and provider result payloads.
+
+### Phase 6.1 - decentralized threat-intelligence foundation
+
+- [x] Audited the existing community-report SHA-256 endpoint and kept it separate from blockchain commitments.
+- [x] Added migration `029_decentralized_threat_intelligence.sql` for report revisions, commitments, provenance, evidence references, validation/dispute records, append-only ledger events and blockchain metadata.
+- [x] Added immutable revision service with previous-revision links; published corrections create a new revision.
+- [x] Added deterministic v1 canonical serialization with stable field ordering, UTF-8 encoding, explicit null/default handling, excluded transport metadata and domain-separated SHA-256.
+- [x] Added authenticated, ownership-protected report, revision, commitment-verification, provenance, validation-history and blockchain-metadata APIs.
+- [x] Added provider-neutral blockchain interface with fail-closed `NOT_CONFIGURED` behavior.
+- [x] Added report creation, revision linking, canonical hash reproducibility, local commitment verification and ownership-boundary tests.
+- [ ] Blockchain RPC/provider adapter, wallet signature verification, smart-contract deployment and on-chain transaction confirmation remain future work for Phase 6.3 or later.
+
+### Phase 6.2 - tamper-evident append-only ledger
+
+- [x] Added migration `030_tamper_evident_ledger.sql` with sequence numbers, hash versions, evidence references and duplicate-event keys while preserving Phase 6.1 events.
+- [x] Added v2 canonical event hashing with a defined genesis hash, sequence continuity and previous-event links.
+- [x] Added process-level serialization, database uniqueness constraints and explicit duplicate-event handling.
+- [x] Blocked ordinary ORM and database-trigger updates/deletes for ledger events; production application roles must still have UPDATE/DELETE privileges revoked by the DBA.
+- [x] Added machine-readable verification for hash, payload, previous-link and sequence failures, including first inconsistency reporting.
+- [x] Added administrator-protected `GET /api/threat-intelligence/ledger/verify`.
+- [x] Added tests for reproducibility, tamper detection, rollback, continuity, duplicate handling and API verification.
+- [x] Added database-backed sequence allocation and a PostgreSQL/SQLite locking strategy for concurrent writers.
+- [x] Added optional external blockchain receipt verification without private-key custody; current environment is correctly reported as `NOT_CONFIGURED`.
+- [ ] Production DBA privilege revocation, a deployed contract ABI/event binding and an authorized external signer are still required before an actual blockchain commitment can be verified.
+
+### Smart-contract deployment infrastructure
+
+- [x] Added independent Hardhat/TypeScript/ethers project under `blockchain/`.
+- [x] Added `ThreatIntelligence.sol` with report commitments, immutable revisions, validation/dispute events and AccessControl roles.
+- [x] Added Sepolia deployment validation, balance checks, confirmation waiting, ABI export and local `.env` address update after confirmed deployment.
+- [x] Added contract tests for anchoring, duplicate rejection, verification, revisions, authorization, invalid inputs and events.
+- [ ] Real Sepolia deployment remains pending until the dedicated deployer wallet is funded with Sepolia ETH; no contract address exists yet.
+
+### Phase 6.3 - EVM blockchain integration
+
+- [x] Added configurable Sepolia-only EVM adapter using Web3.py while preserving SQLAlchemy and the local append-only ledger.
+- [x] Added migration `032_evm_transaction_lifecycle.sql` for transaction hash, block, gas, commitment, report and confirmation metadata.
+- [x] Added transaction lifecycle persistence and administrator-only submission/status endpoints.
+- [x] Added receipt, chain ID, deployed bytecode and expected `ReportAnchored`/`RevisionAnchored` event validation before `CONFIRMED`.
+- [x] Added retry-safe handling for existing pending/submitted transactions and UNKNOWN status for RPC failures.
+- [x] Added contract ABI/deployment instructions and EVM adapter tests.
+- [ ] Actual Sepolia transaction submission remains blocked because the configured address has no contract bytecode and the deployer has no Sepolia ETH.
 
 ## Core scanning
 
@@ -380,3 +428,15 @@ This checklist records repository implementation and observed runtime state. A c
 - [x] Added a separate ML Lifecycle Status panel with live model version, dataset provenance, evaluation metrics and runtime health.
 - [x] Added a persisted single-process local worker fallback that resumes pending/running retraining records after API restart when Celery/Redis is unavailable.
 - [ ] Redis/Celery is still required for scalable multi-worker production execution; no Redis service is available on this host.
+
+### Phase 6.4 - wallet integration and digital signatures
+
+- [x] Added EIP-1193 wallet panel with connect/disconnect, account-change detection, chain-change detection and Sepolia validation.
+- [x] Added short-lived, single-use EIP-4361-style wallet ownership challenges with server-generated nonce, domain, action, chain ID and expiration.
+- [x] Added backend EIP-191 signature recovery and explicit wallet-to-application-user linking; wallet connection is not treated as application authentication.
+- [x] Added EIP-712 report-revision signature challenges binding report ID, revision ID, canonical commitment hash, purpose, chain ID, nonce and expiry.
+- [x] Added signature persistence and migration `033_wallet_signatures.sql`, including challenge consumption and verification metadata.
+- [x] Added automated tests for valid ownership, replay prevention, wrong signer rejection and persisted EIP-712 revision signatures.
+- [x] Verification: wallet tests `3 passed`; targeted blockchain regression tests `7 passed`; frontend typecheck and production build passed.
+- [ ] Live browser-wallet interaction requires an installed EIP-1193 wallet and a connected Sepolia account.
+- [ ] ERC-1271 smart-contract-wallet verification is not enabled; the current implementation verifies EIP-191/EIP-712 EOA signatures.

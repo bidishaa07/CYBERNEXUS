@@ -15,6 +15,7 @@ import InfrastructureHealthPanel from "./components/InfrastructureHealthPanel";
 import CampaignInvestigationPanel from "./components/CampaignInvestigationPanel";
 import SecurityFindingsPanel from "./components/SecurityFindingsPanel";
 import SecurityAuthorizationPanel from "./components/SecurityAuthorizationPanel";
+import WalletIntegrationPanel from "./components/WalletIntegrationPanel";
 
 const nav = [
   ["Overview", BarChart3],
@@ -156,6 +157,7 @@ function Module4Panel() {
           incidents and campaigns. Correlation is separate from a confirmed malicious verdict.
         </p>
       </div>
+      <WalletIntegrationPanel />
       <Correlation />
     </div>
   );
