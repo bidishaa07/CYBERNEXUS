@@ -8,6 +8,8 @@ from backend.app.engines.dns import inspect_dns
 from backend.app.engines.certificate import inspect_certificate
 from backend.app.engines.domain_intelligence import collect
 from backend.app.engines.redirect_risk import score_redirect_chain, compare_destinations
+from backend.app.engines.tls_http_assessment import analyze_tls_report
+from backend.app.services.security_authorization import AuthorizationStopped
 
 def _provider_state(item):
     status=str(item.get("status", "unknown")).lower()
@@ -41,14 +43,25 @@ def _destination_providers(threats, intel):
         if key not in seen: seen.add(key); unique.append(item)
     return unique
 
-def scan(raw_url: str, db=None):
+def scan(raw_url: str, db=None, authorization_guard=None):
+    if authorization_guard:
+        authorization_guard()
     url, domain = normalize_url(raw_url)
-    phishing = analyze(url, domain); network = inspect(url, domain); threats = check(url)
+    phishing = analyze(url, domain); network = inspect(url, domain, authorization_guard)
+    if authorization_guard:
+        authorization_guard()
+    threats = check(url)
     dns = inspect_dns(domain); certificate = inspect_certificate(domain, db)
+    tls_assessment = analyze_tls_report(domain, certificate)
+    network.setdefault("advanced_security", {})["tls"] = tls_assessment
+    network.setdefault("findings", []).extend(tls_assessment["findings"])
+    network["evidence"] = network["findings"]
     network["dns"] = dns
     domain_intelligence = collect(url, domain)
     destination_results = {}
     for hop in network.get("http", {}).get("redirects", []):
+        if authorization_guard:
+            authorization_guard()
         destination = hop.get("destination_url")
         destination_domain = hop.get("destination_domain")
         if not destination or not destination_domain or destination_domain in destination_results:
@@ -60,6 +73,8 @@ def scan(raw_url: str, db=None):
             verdict = "malicious" if "malicious" in verdicts or "phishing" in verdicts else "suspicious" if "suspicious" in verdicts else "unknown"
             destination_results[destination_domain] = {"status":"complete", "verdict":verdict, "threat_intelligence":destination_threats, "provider_results":_destination_providers(destination_threats, destination_domain_intel), "brand_matches":destination_domain_intel.get("domain",{}).get("brand_matches",[]), "domain_intelligence":destination_domain_intel}
         except Exception as exc:
+            if authorization_guard and isinstance(exc, AuthorizationStopped):
+                raise
             destination_results[destination_domain] = {"status":"unavailable", "verdict":"unknown", "provider_results":[{"provider":"Destination intelligence", "state":"UNAVAILABLE", "status":"unavailable", "verdict":"unknown", "reason":type(exc).__name__, "evidence_available":False}] , "reason":type(exc).__name__}
     redirect_risk = score_redirect_chain(url, network.get("http", {}).get("redirects", []), destination_results)
     network["redirect_analysis"] = {"risk":redirect_risk, "comparison":compare_destinations(url, network.get("http", {}).get("redirects", []), destination_results), "destinations":destination_results}
@@ -70,4 +85,6 @@ def scan(raw_url: str, db=None):
         overall_risk["score"] = min(100, overall_risk["score"] + min(25, redirect_score // 2))
         overall_risk["level"] = "Critical" if overall_risk["score"] >= 80 else "High" if overall_risk["score"] >= 55 else "Medium" if overall_risk["score"] >= 25 else "Low"
         overall_risk["redirect_influence"] = {"score":redirect_score, "added":min(25, redirect_score // 2), "explanation":"Redirect evidence contributes up to 25 points and is kept separate from the redirect score."}
+    if authorization_guard:
+        authorization_guard()
     return {"url": raw_url, "normalized_url": url, "domain": domain, "phishing": phishing, "domain_intelligence": domain_intelligence, "network": network, "certificate": certificate, "threat_intelligence": threats, "precautions": precautions, "risk": overall_risk}

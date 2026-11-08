@@ -5,10 +5,10 @@ import secrets
 from datetime import datetime, timezone
 from pathlib import Path
 from fastapi import APIRouter, Depends, HTTPException, Header, UploadFile, File, BackgroundTasks, Query, Response
-from sqlalchemy import or_
+from sqlalchemy import asc, case, cast, desc, func, or_, String as SQLString
 from sqlalchemy.orm import Session
 from backend.app.db.session import get_db, SessionLocal
-from backend.app.models.models import Scan, CommunityReport, DomainIntelligence, ProviderVerdict, ThreatIndicator, RedirectHop, BrandRegistry, BrandVerificationEvidence, BrandVerificationChallenge, BrandVerificationAudit, BrandLogoAsset, BrandImageReference, WebsiteImageCandidate, ImageComparison, CertificateRecord, CertificateChainLink, CertificateValidationResult, CertificateRevocationResult, CertificateRevocationJob, CertificateTransparencyEntry, CertificateTransparencyAnomaly, CertificateRiskAssessment, EmailAnalysis, EmailHeader, EmailAuthenticationResult, EmailHeaderAnomaly, EmailRawMessage, EmailSmtpContext, EmailVerificationRun, MessageAnalysisRecord, MessageIndicatorResult, MessageDomainSpoofingFinding, EmailProviderRegistry, ContactRiskAssessment, IntelligenceVerification, BackgroundTaskRun, MessageAnalysisMetadata, MessageContent, MessageAnalysisEvent, AppUser, LegacyIdentityLink, MessageReview, MessageReviewAudit, MessageReviewFeedback, MLDatasetVersion, MLModelVersion, MLDeploymentHistory, MLTrainingRun
+from backend.app.models.models import Scan, CommunityReport, DomainIntelligence, ProviderVerdict, ThreatIndicator, RedirectHop, BrandRegistry, BrandVerificationEvidence, BrandVerificationChallenge, BrandVerificationAudit, BrandLogoAsset, BrandImageReference, WebsiteImageCandidate, ImageComparison, CertificateRecord, CertificateChainLink, CertificateValidationResult, CertificateRevocationResult, CertificateRevocationJob, CertificateTransparencyEntry, CertificateTransparencyAnomaly, CertificateRiskAssessment, EmailAnalysis, EmailHeader, EmailAuthenticationResult, EmailHeaderAnomaly, EmailRawMessage, EmailSmtpContext, EmailVerificationRun, MessageAnalysisRecord, MessageIndicatorResult, MessageDomainSpoofingFinding, EmailProviderRegistry, ContactRiskAssessment, IntelligenceVerification, BackgroundTaskRun, MessageAnalysisMetadata, MessageContent, MessageAnalysisEvent, AppUser, LegacyIdentityLink, MessageReview, MessageReviewAudit, MessageReviewFeedback, MLDatasetVersion, MLModelVersion, MLDeploymentHistory, MLTrainingRun, SecurityAssessment, SecurityFinding, RemediationRecord, SecurityAuthorization, AssessmentEvent
 from backend.app.schemas.schemas import ScanRequest, ReportRequest
 from backend.app.services.scanner import scan
 from backend.app.services.scanner import _destination_providers
@@ -24,6 +24,11 @@ from backend.app.engines.message import analyze_message
 from backend.app.engines.email_analysis import analyze_email, MAX_EMAIL_BYTES, verify_dkim_signatures, evaluate_spf_context, evaluate_dmarc_alignment
 from backend.app.engines.message_intelligence import analyze_indicators
 from backend.app.engines.correlation import correlate
+from backend.app.services.infrastructure_correlation import run_infrastructure_correlation
+from backend.app.services.message_similarity import correlate_messages, message_similarity_history
+from backend.app.services.incident_campaigns import group_incidents, list_campaigns, set_campaign_status, reject_campaign_incident, merge_campaigns, split_campaign
+from backend.app.services.investigation_graph import get_campaign_graph, get_incident_graph, campaign_timeline, incident_timeline
+from backend.app.services.campaign_summaries import generate_campaign_summary, summary_history
 from backend.app.engines.commitments import commitment
 from backend.app.engines.ml import status as ml_status
 from backend.app.services.llm import configuration_status, verify_connection as verify_llm_connection
@@ -38,8 +43,12 @@ from backend.app.engines.virustotal import configuration_status as virustotal_co
 from backend.app.engines.external_intelligence import status as external_intelligence_status, urlhaus_status as urlhaus_connectivity_status
 from backend.app.engines.certificate_chain import _trusted_roots
 from backend.app.engines.certificate_revocation import analyze_chain
+from backend.app.services.security_assessments import create_assessment, serialize_assessment, serialize_finding, can_access, attach_scan_to_assessment
+from backend.app.services.finding_management import accessible_query, managed_finding, remediation_status_expression, update_remediation, REMEDIATION_STATUSES
+from backend.app.services.security_authorization import create as create_security_authorization, serialize as serialize_security_authorization, transition as transition_security_authorization, scope_allows as authorization_scope_allows, expire_if_needed as expire_security_authorization, AuthorizationStopped
 from backend.app.engines.ca_reputation import configuration_status as ca_reputation_configuration
 from backend.app.services.message_reports import bundle as build_message_report, csv_bytes as report_csv_bytes, pdf_bytes as report_pdf_bytes
+from backend.app.services.security_assessment_reports import build_report as build_security_assessment_report, csv_bytes as security_report_csv_bytes, json_bytes as security_report_json_bytes, pdf_bytes as security_report_pdf_bytes, record_generation as record_security_report_generation, history as security_report_history, FORMATS as SECURITY_REPORT_FORMATS
 from backend.app.services.ml_registry import validate_dataset, artifact_metadata, _safe_artifact, POINTER, MODEL_ROOT
 from backend.app.workers import tasks as worker_tasks
 from backend.app.services.local_ml_worker import submit as submit_local_retraining
@@ -71,14 +80,44 @@ def _refresh_revocation_job(job_id: int, scan_id: int):
     finally: db.close()
 
 def admin_only(x_admin_token: str | None = Header(default=None), principal: Principal = Depends(get_current_principal)):
-    if principal.role != "admin" and x_admin_token != settings.admin_api_token: raise HTTPException(403, "Administrator role required")
+    if principal.role != "admin" and not _admin(x_admin_token): raise HTTPException(403, "Administrator role required")
 
 def _owner(x_user_id: str | None) -> str:
     value = (x_user_id or "anonymous").strip()
     return value[:160] if value else "anonymous"
 
 def _admin(x_admin_token: str | None) -> bool:
-    return bool(x_admin_token and x_admin_token == settings.admin_api_token)
+    # Static admin tokens are retained for local development only. Production
+    # administration must come from the verified OIDC role claim.
+    return settings.environment.lower() != "production" and bool(x_admin_token and x_admin_token == settings.admin_api_token)
+
+def _scan_authorization(db, payload: ScanRequest, principal: Principal):
+    """Validate the authorization boundary for a direct scanner request."""
+    required = settings.enforce_scan_authorization or settings.environment.lower() == "production" or payload.authorization_id is not None
+    if not required:
+        return None, None
+    if payload.authorization_id is None:
+        raise HTTPException(403, "An approved authorization_id is required before active scanning")
+    authorization = db.get(SecurityAuthorization, payload.authorization_id)
+    if not authorization:
+        raise HTTPException(403, "Authorization record not found")
+    expire_security_authorization(db, authorization)
+    if authorization.requester_user_id != principal.user_id and principal.role != "admin":
+        raise HTTPException(403, "Authorization belongs to another requester")
+    categories = [str(x).upper() for x in (payload.allowed_categories or ["FULL_SCAN"])]
+    if not authorization_scope_allows(authorization, payload.url, None):
+        raise HTTPException(403, "Target is outside the approved authorization scope")
+    approved_categories = {str(x).upper() for x in json.loads(authorization.allowed_categories_json or "[]")}
+    if "FULL_SCAN" not in approved_categories and "*" not in approved_categories and any(category not in approved_categories for category in categories):
+        raise HTTPException(403, "Requested scan category is outside the approved authorization")
+    if authorization.approval_status != "APPROVED":
+        raise HTTPException(403, "Authorization is not approved")
+    def guard():
+        expire_security_authorization(db, authorization)
+        db.refresh(authorization)
+        if authorization.approval_status != "APPROVED" or not authorization_scope_allows(authorization, payload.url, None):
+            raise AuthorizationStopped("active scan authorization is no longer valid")
+    return authorization, guard
 
 def _can_view(meta: MessageAnalysisMetadata, user_id: str, admin: bool, legacy_ids: tuple[str, ...] = ()) -> bool:
     return admin or meta.user_id in (user_id, *legacy_ids)
@@ -112,6 +151,252 @@ def auth_session(response: Response, authorization: str | None = Header(default=
 @router.post("/auth/logout")
 def auth_logout(response: Response):
     response.delete_cookie(settings.session_cookie_name, path="/"); return {"logged_out": True}
+
+@router.post("/security-assessments")
+def create_security_assessment(payload: dict, principal: Principal = Depends(get_current_principal), db: Session = Depends(get_db)):
+    """Create a normalized assessment from an existing scan or a pending target.
+
+    Raw client findings are intentionally not accepted; findings are derived from
+    the persisted scanner result so the assessment remains evidence-backed.
+    """
+    target_url = str(payload.get("target_url") or payload.get("url") or "").strip()
+    scan_id = payload.get("scan_id")
+    mode = str(payload.get("assessment_mode") or "PASSIVE").upper()
+    authorization_id = payload.get("authorization_id")
+    if mode == "ACTIVE":
+        try: authorization_id = int(authorization_id)
+        except (TypeError, ValueError): raise HTTPException(403, "Approved authorization_id is required for active assessments")
+        authorization = db.get(SecurityAuthorization, authorization_id)
+        if not authorization: raise HTTPException(403, "Authorization record not found")
+        expire_security_authorization(db, authorization)
+        requested_categories = payload.get("allowed_categories") or ["TLS", "REDIRECTS", "SECURITY_HEADERS"]
+        if authorization.requester_user_id != principal.user_id and principal.role != "admin": raise HTTPException(403, "Authorization belongs to another requester")
+        if not authorization_scope_allows(authorization, target_url, None) or any(not authorization_scope_allows(authorization, target_url, category) for category in requested_categories):
+            raise HTTPException(403, "Target or requested assessment category is outside the approved authorization")
+        if authorization.approval_status != "APPROVED": raise HTTPException(403, "Authorization is not approved")
+    elif mode != "PASSIVE":
+        raise HTTPException(400, "assessment_mode must be PASSIVE or ACTIVE")
+    try:
+        scan_id = int(scan_id) if scan_id is not None else None
+        row = create_assessment(db, user_id=principal.user_id, target_url=target_url, scan_id=scan_id, assessment_mode=mode, authorization_id=authorization_id)
+    except (ValueError, LookupError) as exc:
+        db.rollback(); raise HTTPException(400 if isinstance(exc, ValueError) else 404, str(exc)) from exc
+    return serialize_assessment(db, row)
+
+@router.post("/security-authorizations")
+def request_security_authorization(payload: dict, principal: Principal = Depends(get_current_principal), db: Session = Depends(get_db)):
+    try: return serialize_security_authorization(db, create_security_authorization(db, principal.user_id, payload))
+    except ValueError as exc: db.rollback(); raise HTTPException(400, str(exc)) from exc
+
+@router.get("/security-authorizations")
+def list_security_authorizations(principal: Principal = Depends(get_current_principal), db: Session = Depends(get_db)):
+    query = db.query(SecurityAuthorization)
+    if principal.role != "admin": query = query.filter(SecurityAuthorization.requester_user_id == principal.user_id)
+    return {"items": [serialize_security_authorization(db, row) for row in query.order_by(SecurityAuthorization.created_at.desc()).all()]}
+
+@router.get("/security-authorizations/{authorization_id}")
+def get_security_authorization(authorization_id: int, principal: Principal = Depends(get_current_principal), db: Session = Depends(get_db)):
+    row = db.get(SecurityAuthorization, authorization_id)
+    if not row: raise HTTPException(404, "Authorization record not found")
+    if principal.role != "admin" and row.requester_user_id != principal.user_id: raise HTTPException(403, "Authorization access denied")
+    return serialize_security_authorization(db, row)
+
+@router.post("/security-authorizations/{authorization_id}/approve")
+def approve_security_authorization(authorization_id: int, note: str = "", principal: Principal = Depends(get_current_principal), _: None = Depends(admin_only), db: Session = Depends(get_db)):
+    row = db.get(SecurityAuthorization, authorization_id)
+    if not row: raise HTTPException(404, "Authorization record not found")
+    if row.approval_status not in {"PENDING", "REJECTED"}: raise HTTPException(409, "Authorization cannot be approved from its current state")
+    return serialize_security_authorization(db, transition_security_authorization(db, row, principal.external_subject or principal.user_id, "APPROVED", "APPROVED", note))
+
+@router.post("/security-authorizations/{authorization_id}/reject")
+def reject_security_authorization(authorization_id: int, note: str = "", principal: Principal = Depends(get_current_principal), _: None = Depends(admin_only), db: Session = Depends(get_db)):
+    row = db.get(SecurityAuthorization, authorization_id)
+    if not row: raise HTTPException(404, "Authorization record not found")
+    if row.approval_status not in {"PENDING", "APPROVED"}: raise HTTPException(409, "Authorization cannot be rejected from its current state")
+    return serialize_security_authorization(db, transition_security_authorization(db, row, principal.external_subject or principal.user_id, "REJECTED", "REJECTED", note))
+
+@router.post("/security-authorizations/{authorization_id}/revoke")
+def revoke_security_authorization(authorization_id: int, note: str = "", principal: Principal = Depends(get_current_principal), _: None = Depends(admin_only), db: Session = Depends(get_db)):
+    row = db.get(SecurityAuthorization, authorization_id)
+    if not row: raise HTTPException(404, "Authorization record not found")
+    if row.approval_status != "APPROVED": raise HTTPException(409, "Only approved authorizations can be revoked")
+    return serialize_security_authorization(db, transition_security_authorization(db, row, principal.external_subject or principal.user_id, "REVOKED", "REVOKED", note))
+
+@router.get("/security-assessments/history")
+def security_assessment_history(limit: int = Query(50, ge=1, le=100), offset: int = Query(0, ge=0),
+                                principal: Principal = Depends(get_current_principal), db: Session = Depends(get_db)):
+    query = db.query(SecurityAssessment)
+    if principal.role != "admin": query = query.filter(SecurityAssessment.user_id == principal.user_id)
+    rows = query.order_by(SecurityAssessment.created_at.desc()).offset(offset).limit(limit).all()
+    return {"items": [serialize_assessment(db, row, include_findings=False) for row in rows], "offset": offset, "limit": limit}
+
+@router.post("/security-assessments/{assessment_id}/execute")
+def execute_security_assessment(assessment_id: int, payload: dict | None = None, principal: Principal = Depends(get_current_principal), db: Session = Depends(get_db)):
+    row = db.get(SecurityAssessment, assessment_id)
+    if not row: raise HTTPException(404, "Security assessment not found")
+    if not can_access(db, row, principal, principal.role == "admin"): raise HTTPException(403, "Assessment access denied")
+    if row.assessment_mode != "ACTIVE" or not row.authorization_id: raise HTTPException(403, "Only explicitly authorized ACTIVE assessments can execute")
+    authorization = db.get(SecurityAuthorization, row.authorization_id)
+    if not authorization: raise HTTPException(403, "Authorization record not found")
+    expire_security_authorization(db, authorization)
+    categories = (payload or {}).get("allowed_categories") or json.loads(authorization.allowed_categories_json or "[]")
+    approved_categories = {str(x).upper() for x in json.loads(authorization.allowed_categories_json or "[]")}
+    if not authorization_scope_allows(authorization, row.target_url, None) or ("FULL_SCAN" not in approved_categories and "*" not in approved_categories and any(not authorization_scope_allows(authorization, row.target_url, category) for category in categories)):
+        row.status = "STOPPED"; row.stopped_reason = "Authorization expired, revoked, or outside approved scope"; db.commit(); raise HTTPException(403, row.stopped_reason)
+    try:
+        result = create_scan(ScanRequest(url=row.target_url, authorization_id=authorization.id, allowed_categories=categories), principal, db)
+        scan_row = db.get(Scan, result["id"])
+        attach_scan_to_assessment(db, row, scan_row)
+        db.add(AssessmentEvent(assessment_id=row.id, actor=principal.external_subject or principal.user_id, event_type="ACTIVE_EXECUTION", details_json=json.dumps({"authorization_id": authorization.id, "categories": categories})))
+        db.commit(); db.refresh(row)
+    except AuthorizationStopped as exc:
+        db.rollback(); row = db.get(SecurityAssessment, assessment_id); row.status = "STOPPED"; row.stopped_reason = "Authorization revoked or expired during execution"; db.commit()
+        raise HTTPException(403, "Active assessment stopped because its authorization is no longer valid") from exc
+    except HTTPException: raise
+    except Exception as exc:
+        db.rollback(); row = db.get(SecurityAssessment, assessment_id); row.status = "STOPPED"; row.stopped_reason = type(exc).__name__; db.commit(); raise HTTPException(502, "Authorized assessment execution failed") from exc
+    return serialize_assessment(db, row)
+
+@router.get("/security-assessments/{assessment_id}")
+def get_security_assessment(assessment_id: int, principal: Principal = Depends(get_current_principal), db: Session = Depends(get_db)):
+    row = db.get(SecurityAssessment, assessment_id)
+    if not row: raise HTTPException(404, "Security assessment not found")
+    if not can_access(db, row, principal, principal.role == "admin"): raise HTTPException(403, "Assessment access denied")
+    return serialize_assessment(db, row)
+
+@router.get("/security-assessments/{assessment_id}/reports")
+def list_security_assessment_reports(assessment_id: int, principal: Principal = Depends(get_current_principal), db: Session = Depends(get_db)):
+    assessment = db.get(SecurityAssessment, assessment_id)
+    if not assessment: raise HTTPException(404, "Security assessment not found")
+    if not can_access(db, assessment, principal, principal.role == "admin"): raise HTTPException(403, "Assessment access denied")
+    return {"items": security_report_history(db, assessment_id)}
+
+@router.get("/security-assessments/{assessment_id}/report")
+def export_security_assessment_report(assessment_id: int, format: str = Query("json"), principal: Principal = Depends(get_current_principal), db: Session = Depends(get_db)):
+    selected = format.lower().strip()
+    if selected not in SECURITY_REPORT_FORMATS: raise HTTPException(400, "format must be json, csv, or pdf")
+    assessment = db.get(SecurityAssessment, assessment_id)
+    if not assessment: raise HTTPException(404, "Security assessment not found")
+    if not can_access(db, assessment, principal, principal.role == "admin"): raise HTTPException(403, "Assessment export denied")
+    actor = principal.external_subject or principal.user_id
+    try:
+        report = build_security_assessment_report(db, assessment)
+        if selected == "json":
+            content, media_type = security_report_json_bytes(report), "application/json"
+        elif selected == "csv":
+            content, media_type = security_report_csv_bytes(report), "text/csv"
+        else:
+            content, media_type = security_report_pdf_bytes(report), "application/pdf"
+        record_security_report_generation(db, assessment, actor, selected, len(report["findings"]))
+    except Exception as exc:
+        db.rollback()
+        try: record_security_report_generation(db, assessment, actor, selected, 0, status="FAILED", error=type(exc).__name__)
+        except Exception: db.rollback()
+        raise HTTPException(500, "Security assessment report generation failed") from exc
+    return Response(content=content, media_type=media_type, headers={"Content-Disposition": f'attachment; filename="security-assessment-{assessment_id}.{selected}"'})
+
+@router.get("/security-assessments/{assessment_id}/findings")
+def list_security_findings(assessment_id: int, category: str | None = Query(None), severity: str | None = Query(None),
+                           principal: Principal = Depends(get_current_principal), db: Session = Depends(get_db)):
+    assessment = db.get(SecurityAssessment, assessment_id)
+    if not assessment: raise HTTPException(404, "Security assessment not found")
+    if not can_access(db, assessment, principal, principal.role == "admin"): raise HTTPException(403, "Assessment access denied")
+    query = db.query(SecurityFinding).filter(SecurityFinding.assessment_id == assessment_id)
+    if category: query = query.filter(SecurityFinding.category == category.upper())
+    if severity: query = query.filter(SecurityFinding.severity == severity.upper())
+    return {"assessment_id": assessment_id, "items": [serialize_finding(row) for row in query.order_by(SecurityFinding.id).all()]}
+
+@router.get("/security-findings")
+def search_security_findings(
+    severity: str | None = Query(None), category: str | None = Query(None),
+    status: str | None = Query(None), remediation_status: str | None = Query(None),
+    confidence: str | None = Query(None), date_from: str | None = Query(None),
+    date_to: str | None = Query(None), assessment_id: int | None = Query(None),
+    hostname: str | None = Query(None), search: str | None = Query(None),
+    sort: str = Query("newest"), page: int = Query(1, ge=1),
+    page_size: int = Query(25, ge=1, le=100),
+    principal: Principal = Depends(get_current_principal), db: Session = Depends(get_db),
+):
+    query = accessible_query(db, principal, principal.role == "admin")
+    if severity: query = query.filter(SecurityFinding.severity == severity.upper())
+    if category: query = query.filter(SecurityFinding.category == category.upper())
+    if status: query = query.filter(SecurityFinding.status == status.upper())
+    if remediation_status: query = query.filter(remediation_status_expression() == remediation_status.upper())
+    if confidence: query = query.filter(SecurityFinding.confidence == confidence.upper())
+    if assessment_id is not None: query = query.filter(SecurityFinding.assessment_id == assessment_id)
+    if hostname: query = query.filter(SecurityFinding.hostname.ilike(f"%{hostname.strip()}%"))
+    try:
+        if date_from: query = query.filter(SecurityFinding.first_detected >= datetime.fromisoformat(date_from.replace("Z", "+00:00")))
+        if date_to: query = query.filter(SecurityFinding.first_detected <= datetime.fromisoformat(date_to.replace("Z", "+00:00")))
+    except ValueError as exc:
+        raise HTTPException(400, "date_from and date_to must be ISO timestamps") from exc
+    if search:
+        term = f"%{search.strip()}%"
+        clauses = [SecurityFinding.title.ilike(term), SecurityFinding.hostname.ilike(term), SecurityFinding.category.ilike(term)]
+        if search.strip().isdigit(): clauses.append(SecurityFinding.id == int(search.strip()))
+        query = query.filter(or_(*clauses))
+    total = query.count()
+    groups = query.with_entities(SecurityFinding.severity, func.count(SecurityFinding.id)).group_by(SecurityFinding.severity).all()
+    status_groups = query.with_entities(SecurityFinding.status, func.count(SecurityFinding.id)).group_by(SecurityFinding.status).all()
+    remediation_groups = query.with_entities(remediation_status_expression(), func.count(SecurityFinding.id)).group_by(remediation_status_expression()).all()
+    severity_order = case(
+        (SecurityFinding.severity == "CRITICAL", 5), (SecurityFinding.severity == "HIGH", 4),
+        (SecurityFinding.severity == "MEDIUM", 3), (SecurityFinding.severity == "LOW", 2),
+        else_=1,
+    )
+    sort_map = {
+        "severity": (severity_order, desc), "oldest": (SecurityFinding.first_detected, asc),
+        "newest": (SecurityFinding.first_detected, desc), "confidence": (SecurityFinding.confidence, desc),
+        "remediation": (remediation_status_expression(), asc), "alphabetical": (SecurityFinding.title, asc),
+    }
+    sort_column, direction = sort_map.get(sort, sort_map["newest"])
+    rows = query.order_by(direction(sort_column), SecurityFinding.id.asc()).offset((page - 1) * page_size).limit(page_size).all()
+    return {
+        "items": [managed_finding(db, row, include_history=False) for row in rows],
+        "page": page, "page_size": page_size, "total": total,
+        "pages": (total + page_size - 1) // page_size,
+        "counts": {
+            "severity": {str(key or "UNKNOWN"): value for key, value in groups},
+            "status": {str(key or "UNKNOWN"): value for key, value in status_groups},
+            "remediation": {str(key or "OPEN"): value for key, value in remediation_groups},
+        },
+    }
+
+@router.get("/security-findings/{finding_id}")
+def get_security_finding(finding_id: int, principal: Principal = Depends(get_current_principal), db: Session = Depends(get_db)):
+    row = db.get(SecurityFinding, finding_id)
+    if not row: raise HTTPException(404, "Security finding not found")
+    assessment = db.get(SecurityAssessment, row.assessment_id)
+    if not assessment or not can_access(db, assessment, principal, principal.role == "admin"):
+        raise HTTPException(403, "Finding access denied")
+    return managed_finding(db, row)
+
+@router.patch("/security-findings/{finding_id}/remediation")
+def change_finding_remediation(finding_id: int, payload: dict,
+                               principal: Principal = Depends(get_current_principal), db: Session = Depends(get_db)):
+    finding = db.get(SecurityFinding, finding_id)
+    if not finding: raise HTTPException(404, "Security finding not found")
+    assessment = db.get(SecurityAssessment, finding.assessment_id)
+    if not assessment or not can_access(db, assessment, principal, principal.role == "admin"):
+        raise HTTPException(403, "Finding modification denied")
+    try:
+        record = update_remediation(db, finding, principal.external_subject or principal.user_id, payload)
+    except ValueError as exc:
+        raise HTTPException(409, str(exc)) from exc
+    return managed_finding(db, finding)
+
+@router.post("/security-findings/{finding_id}/verify")
+def verify_finding_remediation(finding_id: int, payload: dict,
+                               principal: Principal = Depends(get_current_principal), db: Session = Depends(get_db)):
+    finding = db.get(SecurityFinding, finding_id)
+    if not finding: raise HTTPException(404, "Security finding not found")
+    assessment = db.get(SecurityAssessment, finding.assessment_id)
+    if not assessment or not can_access(db, assessment, principal, principal.role == "admin"):
+        raise HTTPException(403, "Finding verification denied")
+    if "verified" not in payload or not isinstance(payload.get("verified"), bool):
+        raise HTTPException(400, "verified must be a boolean")
+    record = update_remediation(db, finding, principal.external_subject or principal.user_id, payload, verify=True)
+    return managed_finding(db, finding)
 
 @router.post("/admin/identity-links")
 def link_legacy_identity(payload: dict, principal: Principal = Depends(get_current_principal), x_admin_token: str | None = Header(default=None), db: Session = Depends(get_db)):
@@ -307,8 +592,11 @@ def urlhaus_latest(db: Session = Depends(get_db)):
     return {"provider": row.provider, "status": row.status, "verdict": row.verdict, "evidence": json.loads(row.evidence_json or "{}"), "checked_at": row.checked_at}
 
 @router.post("/scans")
-def create_scan(payload: ScanRequest, db: Session = Depends(get_db)):
-    try: result = scan(payload.url, db)
+def create_scan(payload: ScanRequest, principal: Principal = Depends(get_current_principal), db: Session = Depends(get_db)):
+    authorization, guard = _scan_authorization(db, payload, principal)
+    try: result = scan(payload.url, db, authorization_guard=guard)
+    except AuthorizationStopped as exc:
+        raise HTTPException(403, "Active scan stopped because its authorization is no longer valid") from exc
     except ValueError as exc: raise HTTPException(400, str(exc))
     registered = db.query(BrandRegistry).filter(BrandRegistry.official_domain == result["domain"].lower().rstrip("."), BrandRegistry.verification_status == "verified").first()
     if registered:
@@ -847,6 +1135,91 @@ def llm_verify():
 @router.get("/correlation")
 def correlation(db: Session = Depends(get_db)):
     return correlate(db.query(Scan).all(), db.query(CommunityReport).all())
+
+@router.post("/correlation/infrastructure")
+def infrastructure_correlation(db: Session = Depends(get_db)):
+    """Run Phase 4.2 shared-indicator correlation over persisted evidence."""
+    return run_infrastructure_correlation(db)
+
+@router.post("/correlation/messages")
+def message_correlation(db: Session = Depends(get_db)):
+    """Correlate persisted text and uploaded-email analyses by explainable similarity."""
+    return correlate_messages(db)
+
+@router.get("/correlation/messages")
+def message_correlation_history(analysis_type: str | None = Query(None), analysis_id: str | None = Query(None), db: Session = Depends(get_db)):
+    if bool(analysis_type) != bool(analysis_id):
+        raise HTTPException(400, "analysis_type and analysis_id must be supplied together")
+    return {"items": message_similarity_history(db, analysis_type, analysis_id)}
+
+@router.post("/correlation/campaigns/discover")
+def discover_campaigns(principal: Principal = Depends(get_current_principal), _: None = Depends(admin_only), db: Session = Depends(get_db)):
+    return group_incidents(db)
+
+@router.get("/correlation/campaigns")
+def get_campaigns(db: Session = Depends(get_db)):
+    return {"items": list_campaigns(db)}
+
+@router.post("/correlation/campaigns/{campaign_id}/status")
+def change_campaign_status(campaign_id: int, payload: dict, principal: Principal = Depends(get_current_principal), _: None = Depends(admin_only), db: Session = Depends(get_db)):
+    try:
+        row = set_campaign_status(db, campaign_id, str(payload.get("status") or ""), principal.external_subject or principal.user_id, payload)
+    except ValueError as exc: raise HTTPException(400, str(exc)) from exc
+    except LookupError as exc: raise HTTPException(404, str(exc)) from exc
+    return {"id": row.id, "status": row.status, "confidence": row.confidence}
+
+@router.post("/correlation/campaigns/{campaign_id}/incidents/{incident_id}/reject")
+def reject_campaign_relationship(campaign_id: int, incident_id: int, payload: dict | None = None, principal: Principal = Depends(get_current_principal), _: None = Depends(admin_only), db: Session = Depends(get_db)):
+    try:
+        row = reject_campaign_incident(db, campaign_id, incident_id, principal.external_subject or principal.user_id, str((payload or {}).get("reason") or "")[:2000])
+    except LookupError as exc: raise HTTPException(404, str(exc)) from exc
+    return {"campaign_id": row.campaign_id, "incident_id": row.incident_id, "association_status": row.association_status}
+
+@router.post("/correlation/campaigns/{campaign_id}/merge")
+def merge_campaign(campaign_id: int, payload: dict, principal: Principal = Depends(get_current_principal), _: None = Depends(admin_only), db: Session = Depends(get_db)):
+    try:
+        row = merge_campaigns(db, campaign_id, int(payload.get("source_campaign_id")), principal.external_subject or principal.user_id, str(payload.get("reason") or "")[:2000])
+    except (ValueError, TypeError) as exc: raise HTTPException(400, str(exc)) from exc
+    except LookupError as exc: raise HTTPException(404, str(exc)) from exc
+    return {"id": row.id, "status": row.status, "confidence": row.confidence}
+
+@router.post("/correlation/campaigns/{campaign_id}/split")
+def split_campaign_route(campaign_id: int, payload: dict, principal: Principal = Depends(get_current_principal), _: None = Depends(admin_only), db: Session = Depends(get_db)):
+    try:
+        row = split_campaign(db, campaign_id, payload.get("incident_ids") or [], principal.external_subject or principal.user_id, str(payload.get("reason") or "")[:2000])
+    except (ValueError, TypeError) as exc: raise HTTPException(400, str(exc)) from exc
+    except LookupError as exc: raise HTTPException(404, str(exc)) from exc
+    return {"id": row.id, "campaign_key": row.campaign_key, "status": row.status}
+
+@router.get("/correlation/campaigns/{campaign_id}/graph")
+def campaign_graph(campaign_id: int, max_nodes: int = Query(500, ge=10, le=2000), principal: Principal = Depends(get_current_principal), db: Session = Depends(get_db)):
+    try: return get_campaign_graph(db, campaign_id, max_nodes)
+    except LookupError as exc: raise HTTPException(404, str(exc)) from exc
+
+@router.get("/correlation/incidents/{incident_id}/graph")
+def incident_graph(incident_id: int, max_nodes: int = Query(300, ge=10, le=1000), principal: Principal = Depends(get_current_principal), db: Session = Depends(get_db)):
+    try: return get_incident_graph(db, incident_id, max_nodes)
+    except LookupError as exc: raise HTTPException(404, str(exc)) from exc
+
+@router.get("/correlation/campaigns/{campaign_id}/timeline")
+def campaign_timeline_route(campaign_id: int, principal: Principal = Depends(get_current_principal), db: Session = Depends(get_db)):
+    try: return campaign_timeline(db, campaign_id)
+    except LookupError as exc: raise HTTPException(404, str(exc)) from exc
+
+@router.get("/correlation/incidents/{incident_id}/timeline")
+def incident_timeline_route(incident_id: int, principal: Principal = Depends(get_current_principal), db: Session = Depends(get_db)):
+    try: return incident_timeline(db, incident_id)
+    except LookupError as exc: raise HTTPException(404, str(exc)) from exc
+
+@router.post("/correlation/campaigns/{campaign_id}/summaries")
+def generate_campaign_summary_route(campaign_id: int, principal: Principal = Depends(get_current_principal), db: Session = Depends(get_db)):
+    try: return generate_campaign_summary(db, campaign_id)
+    except LookupError as exc: raise HTTPException(404, str(exc)) from exc
+
+@router.get("/correlation/campaigns/{campaign_id}/summaries")
+def campaign_summary_history_route(campaign_id: int, principal: Principal = Depends(get_current_principal), db: Session = Depends(get_db)):
+    if not db.get(ThreatCampaign, campaign_id): raise HTTPException(404, "campaign not found")
+    return {"items": summary_history(db, campaign_id)}
 
 @router.get("/reports/{report_id}/commitment")
 def report_commitment(report_id: int, db: Session = Depends(get_db)):

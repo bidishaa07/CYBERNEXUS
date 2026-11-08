@@ -5,7 +5,7 @@
     "typecheck": "tsc --noEmit",
     "preview": "vite preview",
     "test": "vitest run --exclude e2e/**",
-    "test:component": "vitest run src/redirect-intelligence.test.tsx",
+    "test:component": "vitest run src/redirect-intelligence.test.tsx src/security-findings.test.tsx",
     "test:e2e": "playwright test"
   },
   "dependencies": { "lucide-react": "0.468.0", "react": "18.3.1", "react-dom": "18.3.1" },

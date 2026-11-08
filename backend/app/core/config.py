@@ -8,6 +8,7 @@ class Settings(BaseSettings):
     database_connect_timeout_seconds: int = 10
     environment: str = "development"
     auth_required: bool = False
+    enforce_scan_authorization: bool = False
     oidc_issuer_url: str = ""
     oidc_jwks_url: str = ""
     oidc_audience: str = ""
@@ -105,6 +106,15 @@ class Settings(BaseSettings):
     tls_minimum_version: str = "TLSv1.2"
     tls_minimum_cipher_bits: int = 128
     certificate_risk_weights_json: str = "{}"
+    correlation_confidence_weights_json: str = "{}"
+    message_similarity_threshold: float = 0.62
+    message_similarity_max_pairs: int = 2000
+    campaign_grouping_threshold: float = 0.65
+    hsts_preload_api_url: str = "https://hstspreload.org/api/v2/status?domain={domain}"
+    hsts_preload_timeout_seconds: float = 5
+    disclosure_vulnerability_lookup_enabled: bool = True
+    nvd_api_url: str = "https://services.nvd.nist.gov/rest/json/cves/2.0"
+    nvd_timeout_seconds: float = 5
     # Support the workspace .env and an optional backend/.env without exposing
     # provider credentials to the frontend. The backend-local file wins when
     # both files define the same setting.

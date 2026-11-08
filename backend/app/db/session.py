@@ -1,4 +1,5 @@
 from sqlalchemy import create_engine, text
+from sqlalchemy.exc import OperationalError
 from pathlib import Path
 from sqlalchemy.orm import declarative_base, sessionmaker
 from backend.app.core.config import settings
@@ -27,4 +28,14 @@ def run_migrations():
     with engine.begin() as connection:
         for path in sorted(migration_dir.glob("*.sql")):
             for statement in path.read_text(encoding="utf-8").split(";"):
-                if statement.strip(): connection.execute(text(statement))
+                if not statement.strip():
+                    continue
+                try:
+                    connection.execute(text(statement))
+                except OperationalError as exc:
+                    # Migrations are intentionally idempotent because the
+                    # application runs them at startup. SQLite has no
+                    # ADD COLUMN IF NOT EXISTS syntax.
+                    message = str(exc).lower()
+                    if "duplicate column" not in message and "already exists" not in message:
+                        raise

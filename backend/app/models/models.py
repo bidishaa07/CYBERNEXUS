@@ -14,6 +14,162 @@ class Scan(Base):
     result_json = Column(Text, nullable=False)
     created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
 
+class SecurityAssessment(Base):
+    __tablename__ = "security_assessments"
+    id=Column(Integer,primary_key=True)
+    scan_id=Column(Integer,ForeignKey("scans.id"),index=True)
+    user_id=Column(String(160),nullable=False,index=True,default="anonymous")
+    target_url=Column(String(2048),nullable=False)
+    hostname=Column(String(255),nullable=False,index=True)
+    status=Column(String(30),nullable=False,default="COMPLETED",index=True)
+    finding_count=Column(Integer,nullable=False,default=0)
+    pass_count=Column(Integer,nullable=False,default=0)
+    fail_count=Column(Integer,nullable=False,default=0)
+    warning_count=Column(Integer,nullable=False,default=0)
+    unknown_count=Column(Integer,nullable=False,default=0)
+    created_at=Column(DateTime,default=lambda: datetime.now(timezone.utc),index=True)
+    completed_at=Column(DateTime)
+    assessment_mode=Column(String(20),nullable=False,default="PASSIVE")
+    authorization_id=Column(Integer,index=True)
+    stopped_reason=Column(String(255))
+
+class SecurityAuthorization(Base):
+    __tablename__ = "security_authorizations"
+    id=Column(Integer,primary_key=True)
+    assessment_id=Column(Integer,ForeignKey("security_assessments.id"),index=True)
+    target_hostname=Column(String(255),nullable=False,index=True)
+    authorized_organization=Column(String(255),nullable=False)
+    requester_user_id=Column(String(160),nullable=False,index=True)
+    authorization_confirmed=Column(Integer,nullable=False,default=0)
+    permitted_scope_json=Column(Text,default="[]")
+    allowed_categories_json=Column(Text,default="[]")
+    start_time=Column(DateTime,nullable=False)
+    expires_at=Column(DateTime,nullable=False,index=True)
+    approval_status=Column(String(20),nullable=False,default="PENDING",index=True)
+    supporting_reference=Column(String(2048))
+    approved_by=Column(String(160))
+    approved_at=Column(DateTime)
+    revoked_at=Column(DateTime)
+    created_at=Column(DateTime,default=lambda: datetime.now(timezone.utc),index=True)
+    updated_at=Column(DateTime,default=lambda: datetime.now(timezone.utc))
+
+class SecurityAuthorizationEvent(Base):
+    __tablename__ = "security_authorization_events"
+    id=Column(Integer,primary_key=True)
+    authorization_id=Column(Integer,ForeignKey("security_authorizations.id"),index=True,nullable=False)
+    actor=Column(String(160),nullable=False)
+    action=Column(String(40),nullable=False)
+    previous_status=Column(String(20))
+    new_status=Column(String(20))
+    note=Column(Text,default="")
+    created_at=Column(DateTime,default=lambda: datetime.now(timezone.utc),index=True)
+
+class SecurityFinding(Base):
+    __tablename__ = "security_findings"
+    id=Column(Integer,primary_key=True)
+    assessment_id=Column(Integer,ForeignKey("security_assessments.id"),index=True,nullable=False)
+    target_url=Column(String(2048),nullable=False)
+    hostname=Column(String(255),nullable=False,index=True)
+    category=Column(String(50),nullable=False,index=True)
+    check_identifier=Column(String(120),nullable=False)
+    title=Column(String(255),nullable=False)
+    description=Column(Text,default="")
+    severity=Column(String(20),nullable=False,default="INFO",index=True)
+    confidence=Column(String(20),nullable=False,default="UNKNOWN")
+    status=Column(String(30),nullable=False,default="UNKNOWN",index=True)
+    observed_value=Column(Text)
+    expected_value=Column(Text)
+    security_impact=Column(Text,default="")
+    remediation=Column(Text,default="")
+    evidence_json=Column(Text,default="{}")
+    verification_limitations=Column(Text,default="")
+    remediation_status=Column(String(30),nullable=False,default="OPEN")
+    first_detected=Column(DateTime,default=lambda: datetime.now(timezone.utc))
+    last_detected=Column(DateTime,default=lambda: datetime.now(timezone.utc))
+    created_at=Column(DateTime,default=lambda: datetime.now(timezone.utc))
+    __table_args__=(UniqueConstraint("assessment_id","check_identifier",name="uq_security_finding_check"),)
+
+class SecurityCheckResult(Base):
+    __tablename__ = "security_check_results"
+    id=Column(Integer,primary_key=True)
+    assessment_id=Column(Integer,ForeignKey("security_assessments.id"),index=True,nullable=False)
+    category=Column(String(50),nullable=False,index=True)
+    check_identifier=Column(String(120),nullable=False)
+    status=Column(String(30),nullable=False)
+    result_json=Column(Text,default="{}")
+    checked_at=Column(DateTime,default=lambda: datetime.now(timezone.utc))
+    __table_args__=(UniqueConstraint("assessment_id","check_identifier",name="uq_security_check_result"),)
+
+class SecurityEvidence(Base):
+    __tablename__ = "security_evidence"
+    id=Column(Integer,primary_key=True)
+    assessment_id=Column(Integer,ForeignKey("security_assessments.id"),index=True,nullable=False)
+    finding_id=Column(Integer,ForeignKey("security_findings.id"),index=True)
+    source=Column(String(120),nullable=False)
+    evidence_type=Column(String(80),nullable=False)
+    details_json=Column(Text,default="{}")
+    observed_at=Column(DateTime,default=lambda: datetime.now(timezone.utc))
+
+class RemediationRecord(Base):
+    __tablename__ = "security_remediation_records"
+    __table_args__ = (UniqueConstraint("finding_id", name="ux_security_remediation_records_finding_id"),)
+    id=Column(Integer,primary_key=True)
+    finding_id=Column(Integer,ForeignKey("security_findings.id"),index=True,nullable=False)
+    status=Column(String(30),nullable=False,default="OPEN")
+    note=Column(Text,default="")
+    updated_by=Column(String(160),nullable=False,default="system")
+    updated_at=Column(DateTime,default=lambda: datetime.now(timezone.utc))
+    assigned_to=Column(String(160))
+    proposed_fix=Column(Text,default="")
+    applied_fix=Column(Text,default="")
+    verification_status=Column(String(30),nullable=False,default="NOT_REQUESTED")
+    verification_note=Column(Text,default="")
+    verified_by=Column(String(160))
+    verified_at=Column(DateTime)
+
+class FindingRemediationEvent(Base):
+    __tablename__ = "security_finding_remediation_events"
+    id=Column(Integer,primary_key=True)
+    finding_id=Column(Integer,ForeignKey("security_findings.id"),index=True,nullable=False)
+    actor=Column(String(160),nullable=False)
+    action=Column(String(50),nullable=False)
+    previous_status=Column(String(30))
+    new_status=Column(String(30))
+    note=Column(Text,default="")
+    verification_result=Column(String(30),default="NOT_REQUESTED")
+    details_json=Column(Text,default="{}")
+    created_at=Column(DateTime,default=lambda: datetime.now(timezone.utc),index=True)
+
+class AssessmentAuthorization(Base):
+    __tablename__ = "security_assessment_authorizations"
+    id=Column(Integer,primary_key=True)
+    assessment_id=Column(Integer,ForeignKey("security_assessments.id"),index=True,nullable=False)
+    user_id=Column(String(160),nullable=False,index=True)
+    access_level=Column(String(30),nullable=False,default="VIEW")
+    created_at=Column(DateTime,default=lambda: datetime.now(timezone.utc))
+    __table_args__=(UniqueConstraint("assessment_id","user_id",name="uq_security_assessment_authorization"),)
+
+class AssessmentEvent(Base):
+    __tablename__ = "security_assessment_events"
+    id=Column(Integer,primary_key=True)
+    assessment_id=Column(Integer,ForeignKey("security_assessments.id"),index=True,nullable=False)
+    actor=Column(String(160),nullable=False)
+    event_type=Column(String(60),nullable=False)
+    details_json=Column(Text,default="{}")
+    created_at=Column(DateTime,default=lambda: datetime.now(timezone.utc))
+
+class SecurityAssessmentReport(Base):
+    __tablename__ = "security_assessment_reports"
+    id=Column(Integer,primary_key=True)
+    assessment_id=Column(Integer,ForeignKey("security_assessments.id"),index=True,nullable=False)
+    generated_by=Column(String(160),nullable=False,index=True)
+    report_version=Column(String(30),nullable=False,default="1.0")
+    format=Column(String(10),nullable=False)
+    status=Column(String(20),nullable=False,default="COMPLETED")
+    finding_count=Column(Integer,nullable=False,default=0)
+    error=Column(Text,default="")
+    generated_at=Column(DateTime,default=lambda: datetime.now(timezone.utc),index=True)
+
 class CommunityReport(Base):
     __tablename__ = "community_reports"
     id = Column(Integer, primary_key=True)
@@ -27,6 +183,192 @@ class ThreatIndicator(Base):
     __tablename__ = "threat_indicators"
     id=Column(Integer,primary_key=True); indicator=Column(String(2048),nullable=False,index=True); indicator_type=Column(String(40),nullable=False); category=Column(String(80)); confidence=Column(Float,default=0); verification_status=Column(String(30),default="unverified"); source=Column(String(100)); source_reference=Column(String(2048)); first_seen=Column(DateTime,default=lambda:datetime.now(timezone.utc)); last_seen=Column(DateTime,default=lambda:datetime.now(timezone.utc)); expires_at=Column(DateTime)
     __table_args__=(UniqueConstraint("indicator","indicator_type","source",name="uq_threat_indicator_source"),)
+
+class IndicatorObservation(Base):
+    __tablename__ = "indicator_observations"
+    id=Column(Integer,primary_key=True)
+    indicator_id=Column(Integer,ForeignKey("threat_indicators.id"),index=True,nullable=False)
+    source_analysis_type=Column(String(40),nullable=False)
+    source_analysis_id=Column(String(160),nullable=False,index=True)
+    normalized_value=Column(String(2048),nullable=False,index=True)
+    original_observed_value=Column(Text,nullable=False)
+    source_provider=Column(String(120))
+    verification_status=Column(String(30),default="unknown")
+    confidence=Column(Float)
+    metadata_json=Column(Text,default="{}")
+    first_observed=Column(DateTime,default=lambda: datetime.now(timezone.utc))
+    last_observed=Column(DateTime,default=lambda: datetime.now(timezone.utc))
+    observation_count=Column(Integer,default=1)
+    __table_args__=(UniqueConstraint("indicator_id","source_analysis_type","source_analysis_id","normalized_value",name="uq_indicator_observation_source"),)
+
+class IndicatorRelationship(Base):
+    __tablename__ = "indicator_relationships"
+    id=Column(Integer,primary_key=True)
+    source_indicator_id=Column(Integer,ForeignKey("threat_indicators.id"),index=True,nullable=False)
+    target_indicator_id=Column(Integer,ForeignKey("threat_indicators.id"),index=True,nullable=False)
+    relationship_type=Column(String(80),nullable=False)
+    status=Column(String(30),default="observed")
+    confidence=Column(Float)
+    first_observed=Column(DateTime,default=lambda: datetime.now(timezone.utc))
+    last_observed=Column(DateTime,default=lambda: datetime.now(timezone.utc))
+    originating_analysis_type=Column(String(40))
+    originating_analysis_id=Column(String(160),index=True)
+    __table_args__=(UniqueConstraint("source_indicator_id","target_indicator_id","relationship_type",name="uq_indicator_relationship"),)
+
+class CorrelationEvidence(Base):
+    __tablename__ = "correlation_evidence"
+    id=Column(Integer,primary_key=True)
+    relationship_id=Column(Integer,ForeignKey("indicator_relationships.id"),index=True)
+    result_id=Column(Integer,ForeignKey("correlation_results.id"),index=True)
+    evidence_type=Column(String(80),nullable=False)
+    source=Column(String(120),nullable=False)
+    details_json=Column(Text,default="{}")
+    confidence=Column(Float)
+    observed_at=Column(DateTime,default=lambda: datetime.now(timezone.utc))
+
+class CorrelationResult(Base):
+    __tablename__ = "correlation_results"
+    id=Column(Integer,primary_key=True)
+    source_analysis_type=Column(String(40),index=True)
+    source_analysis_id=Column(String(160),index=True)
+    relationship_type=Column(String(80),nullable=False)
+    status=Column(String(30),nullable=False,default="observed")
+    confidence=Column(Float)
+    explanation=Column(Text)
+    result_json=Column(Text,default="{}")
+    first_observed=Column(DateTime,default=lambda: datetime.now(timezone.utc))
+    last_observed=Column(DateTime,default=lambda: datetime.now(timezone.utc))
+
+class CorrelationAnalysisEvent(Base):
+    __tablename__ = "correlation_analysis_events"
+    id=Column(Integer,primary_key=True)
+    analysis_type=Column(String(40),nullable=False)
+    analysis_id=Column(String(160),nullable=False,index=True)
+    event_type=Column(String(60),nullable=False)
+    actor=Column(String(160),nullable=False,default="system")
+    details_json=Column(Text,default="{}")
+    created_at=Column(DateTime,default=lambda: datetime.now(timezone.utc))
+
+class MessageSimilarityResult(Base):
+    __tablename__ = "message_similarity_results"
+    id=Column(Integer,primary_key=True)
+    source_message_type=Column(String(20),nullable=False)
+    source_message_id=Column(String(160),nullable=False,index=True)
+    related_message_type=Column(String(20),nullable=False)
+    related_message_id=Column(String(160),nullable=False,index=True)
+    similarity_score=Column(Float,nullable=False)
+    matching_features_json=Column(Text,default="{}")
+    detection_method=Column(String(120),nullable=False)
+    evidence_json=Column(Text,default="{}")
+    model_version=Column(String(160))
+    first_observed=Column(DateTime,default=lambda: datetime.now(timezone.utc))
+    last_observed=Column(DateTime,default=lambda: datetime.now(timezone.utc))
+    __table_args__=(UniqueConstraint("source_message_type","source_message_id","related_message_type","related_message_id",name="uq_message_similarity_pair"),)
+
+class SecurityIncident(Base):
+    __tablename__ = "security_incidents"
+    id=Column(Integer,primary_key=True)
+    incident_key=Column(String(80),unique=True,index=True,nullable=False)
+    title=Column(String(255),nullable=False)
+    description=Column(Text,default="")
+    severity=Column(String(30),default="UNKNOWN")
+    status=Column(String(30),default="NEW",index=True)
+    first_seen=Column(DateTime,default=lambda: datetime.now(timezone.utc))
+    last_seen=Column(DateTime,default=lambda: datetime.now(timezone.utc))
+    created_at=Column(DateTime,default=lambda: datetime.now(timezone.utc))
+    updated_at=Column(DateTime,default=lambda: datetime.now(timezone.utc))
+
+class SecurityIncidentSource(Base):
+    __tablename__ = "security_incident_sources"
+    id=Column(Integer,primary_key=True)
+    incident_id=Column(Integer,ForeignKey("security_incidents.id"),index=True,nullable=False)
+    source_type=Column(String(40),nullable=False)
+    source_id=Column(String(160),nullable=False)
+    __table_args__=(UniqueConstraint("source_type","source_id",name="uq_security_incident_source"),)
+
+class IncidentIndicator(Base):
+    __tablename__ = "incident_indicators"
+    id=Column(Integer,primary_key=True)
+    incident_id=Column(Integer,ForeignKey("security_incidents.id"),index=True,nullable=False)
+    indicator_id=Column(Integer,ForeignKey("threat_indicators.id"),index=True,nullable=False)
+    evidence_json=Column(Text,default="{}")
+    __table_args__=(UniqueConstraint("incident_id","indicator_id",name="uq_incident_indicator"),)
+
+class IncidentEvidence(Base):
+    __tablename__ = "incident_evidence"
+    id=Column(Integer,primary_key=True)
+    incident_id=Column(Integer,ForeignKey("security_incidents.id"),index=True,nullable=False)
+    evidence_type=Column(String(80),nullable=False)
+    source=Column(String(120),nullable=False)
+    confidence=Column(Float)
+    details_json=Column(Text,default="{}")
+    observed_at=Column(DateTime,default=lambda: datetime.now(timezone.utc))
+
+class ThreatCampaign(Base):
+    __tablename__ = "threat_campaigns"
+    id=Column(Integer,primary_key=True)
+    campaign_key=Column(String(160),unique=True,index=True,nullable=False)
+    name=Column(String(255),nullable=False)
+    description=Column(Text,default="")
+    severity=Column(String(30),default="UNKNOWN")
+    confidence=Column(Float,default=0)
+    status=Column(String(30),default="NEW",index=True)
+    first_seen=Column(DateTime,default=lambda: datetime.now(timezone.utc))
+    last_seen=Column(DateTime,default=lambda: datetime.now(timezone.utc))
+    created_at=Column(DateTime,default=lambda: datetime.now(timezone.utc))
+    updated_at=Column(DateTime,default=lambda: datetime.now(timezone.utc))
+
+class CampaignIncident(Base):
+    __tablename__ = "campaign_incidents"
+    id=Column(Integer,primary_key=True)
+    campaign_id=Column(Integer,ForeignKey("threat_campaigns.id"),index=True,nullable=False)
+    incident_id=Column(Integer,ForeignKey("security_incidents.id"),index=True,nullable=False)
+    confidence=Column(Float)
+    explanation=Column(Text)
+    association_status=Column(String(30),default="ACTIVE")
+    added_at=Column(DateTime,default=lambda: datetime.now(timezone.utc))
+    __table_args__=(UniqueConstraint("campaign_id","incident_id",name="uq_campaign_incident"),)
+
+class CampaignIndicator(Base):
+    __tablename__ = "campaign_indicators"
+    id=Column(Integer,primary_key=True)
+    campaign_id=Column(Integer,ForeignKey("threat_campaigns.id"),index=True,nullable=False)
+    indicator_id=Column(Integer,ForeignKey("threat_indicators.id"),index=True,nullable=False)
+    evidence_json=Column(Text,default="{}")
+    __table_args__=(UniqueConstraint("campaign_id","indicator_id",name="uq_campaign_indicator"),)
+
+class CampaignEvidence(Base):
+    __tablename__ = "campaign_evidence"
+    id=Column(Integer,primary_key=True)
+    campaign_id=Column(Integer,ForeignKey("threat_campaigns.id"),index=True,nullable=False)
+    evidence_type=Column(String(80),nullable=False)
+    source=Column(String(120),nullable=False)
+    confidence=Column(Float)
+    details_json=Column(Text,default="{}")
+    observed_at=Column(DateTime,default=lambda: datetime.now(timezone.utc))
+
+class CampaignAuditEvent(Base):
+    __tablename__ = "campaign_audit_events"
+    id=Column(Integer,primary_key=True)
+    campaign_id=Column(Integer,ForeignKey("threat_campaigns.id"),index=True,nullable=False)
+    actor=Column(String(160),nullable=False)
+    action=Column(String(80),nullable=False)
+    previous_status=Column(String(30))
+    new_status=Column(String(30))
+    details_json=Column(Text,default="{}")
+    created_at=Column(DateTime,default=lambda: datetime.now(timezone.utc))
+
+class CampaignSummary(Base):
+    __tablename__ = "campaign_summaries"
+    id=Column(Integer,primary_key=True)
+    campaign_id=Column(Integer,ForeignKey("threat_campaigns.id"),index=True,nullable=False)
+    campaign_version=Column(String(80),nullable=False)
+    summary_text=Column(Text,nullable=False)
+    evidence_refs_json=Column(Text,default="[]")
+    provider=Column(String(120),nullable=False)
+    model=Column(String(160))
+    generation_status=Column(String(40),nullable=False)
+    generated_at=Column(DateTime,default=lambda: datetime.now(timezone.utc))
 
 class ProviderVerdict(Base):
     __tablename__="provider_verdicts"

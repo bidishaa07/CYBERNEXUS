@@ -24,8 +24,24 @@ class UnsafeDestination(ValueError):
 @dataclass
 class SafeResponse:
     status_code: int
-    headers: dict[str, str]
+    headers: dict[str, str | list[str]]
     body: bytes
+
+
+def _normalized_headers(raw_headers):
+    result = {}
+    for key, value in raw_headers:
+        key = key.lower()
+        if key in {"set-cookie", "strict-transport-security"}:
+            if key in result:
+                if not isinstance(result[key], list):
+                    result[key] = [result[key]]
+                result[key].append(value)
+            else:
+                result[key] = value
+        else:
+            result[key] = value
+    return result
 
 def post_binary(url: str, body: bytes, content_type: str, timeout: float = 5.0, max_bytes: int | None = None) -> SafeResponse:
     """Pinned, one-shot POST for binary protocol endpoints such as OCSP."""
@@ -54,7 +70,7 @@ def post_binary(url: str, body: bytes, content_type: str, timeout: float = 5.0, 
         response_body = response.read(limit + 1)
         if len(response_body) > limit:
             raise ValueError("response size limit exceeded")
-        return SafeResponse(response.status, {key.lower(): value for key, value in response.getheaders()}, response_body)
+        return SafeResponse(response.status, _normalized_headers(response.getheaders()), response_body)
     finally:
         sock.close()
 
@@ -104,6 +120,6 @@ def fetch(url: str, timeout: float = 5.0, max_bytes: int | None = None) -> SafeR
         body = response.read(limit + 1)
         if len(body) > limit:
             raise ValueError("response size limit exceeded")
-        return SafeResponse(response.status, {key.lower(): value for key, value in response.getheaders()}, body)
+        return SafeResponse(response.status, _normalized_headers(response.getheaders()), body)
     finally:
         sock.close()

@@ -1,0 +1,4 @@
+-- Phase 4.3: persisted, explainable message similarity relationships.
+CREATE TABLE IF NOT EXISTS message_similarity_results (id INTEGER PRIMARY KEY, source_message_type VARCHAR(20) NOT NULL, source_message_id VARCHAR(160) NOT NULL, related_message_type VARCHAR(20) NOT NULL, related_message_id VARCHAR(160) NOT NULL, similarity_score FLOAT NOT NULL, matching_features_json TEXT DEFAULT '{}', detection_method VARCHAR(120) NOT NULL, evidence_json TEXT DEFAULT '{}', model_version VARCHAR(160), first_observed TIMESTAMP, last_observed TIMESTAMP, CONSTRAINT uq_message_similarity_pair UNIQUE(source_message_type, source_message_id, related_message_type, related_message_id));
+CREATE INDEX IF NOT EXISTS ix_message_similarity_results_source_message_id ON message_similarity_results(source_message_id);
+CREATE INDEX IF NOT EXISTS ix_message_similarity_results_related_message_id ON message_similarity_results(related_message_id);

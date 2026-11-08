@@ -11,3 +11,13 @@ export async function upload(path: string, file: File) {
   if (!res.ok) { let detail = `Upload failed (${res.status})`; try { const body = await res.json(); detail = body.detail || detail; } catch {} throw new Error(detail); }
   return res.json();
 }
+
+export async function downloadFile(path: string) {
+  const res = await fetch(`${API}${path}`, { credentials: 'include' });
+  if (!res.ok) {
+    let detail = `Download failed (${res.status})`;
+    try { const body = await res.json(); detail = body.detail || detail; } catch {}
+    throw new Error(detail);
+  }
+  return { blob: await res.blob(), disposition: res.headers.get('content-disposition') || '' };
+}

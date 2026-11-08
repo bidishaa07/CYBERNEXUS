@@ -3,6 +3,9 @@ from pydantic import BaseModel, Field, HttpUrl
 
 class ScanRequest(BaseModel):
     url: str = Field(min_length=4, max_length=2048)
+    # Required when production scan authorization enforcement is enabled.
+    authorization_id: int | None = Field(default=None, ge=1)
+    allowed_categories: list[str] | None = None
 
 class ReportRequest(BaseModel):
     url: str = Field(min_length=4, max_length=2048)
