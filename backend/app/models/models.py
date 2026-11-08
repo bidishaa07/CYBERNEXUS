@@ -159,3 +159,11 @@ class EmailProviderRegistry(Base):
 class ContactRiskAssessment(Base):
     __tablename__ = "contact_risk_assessments"
     id=Column(Integer,primary_key=True); message_analysis_id=Column(Integer,ForeignKey("message_analysis_records.id"),index=True); email_analysis_id=Column(Integer,ForeignKey("email_analyses.id"),index=True); indicator_type=Column(String(30),nullable=False); indicator=Column(String(2048),nullable=False); score=Column(Integer,nullable=False); classification=Column(String(30),nullable=False); confidence=Column(String(30),nullable=False); evidence_json=Column(Text,nullable=False); checked_at=Column(DateTime,default=lambda:datetime.now(timezone.utc))
+
+class IntelligenceVerification(Base):
+    __tablename__ = "intelligence_verifications"
+    id=Column(Integer,primary_key=True); indicator_type=Column(String(30),nullable=False,index=True); indicator=Column(String(2048),nullable=False,index=True); provider=Column(String(120),nullable=False); status=Column(String(30),nullable=False); result_json=Column(Text,nullable=False); checked_at=Column(DateTime,default=lambda:datetime.now(timezone.utc)); created_at=Column(DateTime,default=lambda:datetime.now(timezone.utc))
+
+class BackgroundTaskRun(Base):
+    __tablename__ = "background_task_runs"
+    id=Column(Integer,primary_key=True); task_id=Column(String(160),unique=True,index=True,nullable=False); task_name=Column(String(160),nullable=False); status=Column(String(30),nullable=False); result_json=Column(Text); error=Column(String(255)); started_at=Column(DateTime); completed_at=Column(DateTime); created_at=Column(DateTime,default=lambda:datetime.now(timezone.utc))

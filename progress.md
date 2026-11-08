@@ -286,3 +286,19 @@ This checklist records repository implementation and observed runtime state. A c
 - [ ] A concrete phone-abuse provider URL/key is not configured in the current environment; live abuse reputation remains UNKNOWN until `PHONE_REPUTATION_API_URL` and its credential are supplied.
 - [ ] SPF/DKIM/DMARC checks remain evidence-aware: uploaded messages without trusted SMTP context or independent DKIM evidence remain UNKNOWN.
 - [ ] The current architecture uses SQLAlchemy migrations and an in-memory cache; PostgreSQL/Redis/background refresh remain production deployment work.
+
+### Production phone, email authentication and infrastructure upgrade
+
+- [x] Added independent DNS SPF inspection with syntax, multiple-record, lookup-count, permissive-policy and DNS-failure states.
+- [x] Added independent DNS DMARC inspection with policy, subdomain policy, alignment, reporting tags and monitoring-only warnings.
+- [x] Added selector-aware DKIM DNS inspection; DNS key presence is never reported as a cryptographic signature PASS.
+- [x] Reused the preserved-byte DKIM verifier for genuine message evidence through the new authentication service.
+- [x] Added `POST /api/intelligence/phone/analyze` and `POST /api/intelligence/email/authentication`.
+- [x] Added provider/database/cache/worker health endpoint and persisted verification/task models via migration `016_production_intelligence.sql`.
+- [x] Added SQLAlchemy PostgreSQL pooling, pre-ping and connection timeout configuration while preserving SQLite development support.
+- [x] Added Redis cache service with TTL, namespace, health status and explicit production fail-closed behavior.
+- [x] Added optional Celery task module with retry/backoff configuration for phone and email-authentication refreshes.
+- [x] Added Docker Compose deployment definitions for API, frontend, PostgreSQL, Redis, worker and beat.
+- [x] Verification: full backend suite `125 passed, 1 skipped`; frontend typecheck and production build passed.
+- [ ] A live IPQualityScore or equivalent phone provider is not configured; phone abuse verdicts remain UNKNOWN until a real endpoint/key is supplied.
+- [ ] Redis/Celery/PostgreSQL live service integration was not executed in this environment; Compose configuration is present but requires Docker and service credentials.

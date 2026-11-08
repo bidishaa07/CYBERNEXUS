@@ -172,7 +172,23 @@ PHONE_REPUTATION_CACHE_TTL_SECONDS=900
 DISPOSABLE_EMAIL_DOMAINS=
 ```
 
-The current test baseline is `120 passed, 1 skipped` for the backend suite. Frontend TypeScript checking and the Vite production build also pass. A live phone-abuse provider result is not claimed until a compatible provider endpoint and credential are configured.
+The current test baseline is `125 passed, 1 skipped` for the backend suite. Frontend TypeScript checking and the Vite production build also pass. A live phone-abuse provider result is not claimed until a compatible provider endpoint and credential are configured.
+
+## Production phone, email authentication and infrastructure
+
+The production upgrade adds:
+
+- `POST /api/intelligence/phone/analyze` for normalized phone metadata and configurable provider reputation.
+- `POST /api/intelligence/email/authentication` for independent DNS SPF/DMARC analysis and selector-aware DKIM verification. DNS key presence is reported as a warning, never as a DKIM signature pass.
+- `GET /api/intelligence/providers/health` for database, Redis, worker and phone-provider configuration status.
+- `GET /api/intelligence/tasks/{task_id}` for persisted background-task status.
+- Migration `016_production_intelligence.sql` for verification history and background task records.
+- Optional Redis cache through `REDIS_URL`; production mode fails closed if Redis is absent instead of silently using local memory.
+- Optional Celery worker/beat tasks through `CELERY_BROKER_URL` and `CELERY_RESULT_BACKEND`.
+- PostgreSQL SQLAlchemy pooling and pre-ping when `DATABASE_URL` uses a PostgreSQL driver.
+- `docker-compose.yml` with API, Vite/Nginx frontend, PostgreSQL, Redis, Celery worker and beat services. PostgreSQL and Redis are internal-only by default.
+
+Production configuration requires a real phone intelligence account and compatible endpoint. SPF/DMARC DNS inspection works without provider credentials. Independent DKIM cryptographic verification additionally requires original RFC 5322 bytes and a valid selector/public key; a selector record alone is not a message verification result.
 
 ## Structure
 

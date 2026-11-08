@@ -2,6 +2,17 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 class Settings(BaseSettings):
     database_url: str = "sqlite:///./digital_trust.db"
+    database_pool_size: int = 5
+    database_max_overflow: int = 10
+    database_pool_timeout_seconds: int = 30
+    database_connect_timeout_seconds: int = 10
+    environment: str = "development"
+    redis_url: str = ""
+    redis_namespace: str = "digital-trust"
+    redis_timeout_seconds: float = 2
+    celery_broker_url: str = ""
+    celery_result_backend: str = ""
+    celery_task_timeout_seconds: int = 120
     google_safe_browsing_api_key: str = ""
     google_cloud_project_id: str = ""
     virustotal_api_key: str = ""
@@ -48,7 +59,11 @@ class Settings(BaseSettings):
     phone_reputation_auth_header: str = "Authorization"
     phone_reputation_timeout_seconds: float = 6
     phone_reputation_cache_ttl_seconds: int = 900
+    phone_reputation_max_retries: int = 2
+    phone_reputation_provider: str = "configured-phone-provider"
     disposable_email_domains: str = ""
+    dns_cache_ttl_seconds: int = 300
+    dns_timeout_seconds: float = 4
     ipinfo_token: str = ""
     ip_intelligence_provider: str = "freeipapi"
     freeipapi_base_url: str = "https://freeipapi.com/api/json/"

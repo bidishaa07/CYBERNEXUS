@@ -1,11 +1,12 @@
 import hashlib
 import json
+import re
 import secrets
 from datetime import datetime, timezone
 from fastapi import APIRouter, Depends, HTTPException, Header, UploadFile, File, BackgroundTasks
 from sqlalchemy.orm import Session
 from backend.app.db.session import get_db, SessionLocal
-from backend.app.models.models import Scan, CommunityReport, DomainIntelligence, ProviderVerdict, ThreatIndicator, RedirectHop, BrandRegistry, BrandVerificationEvidence, BrandVerificationChallenge, BrandVerificationAudit, BrandLogoAsset, BrandImageReference, WebsiteImageCandidate, ImageComparison, CertificateRecord, CertificateChainLink, CertificateValidationResult, CertificateRevocationResult, CertificateRevocationJob, CertificateTransparencyEntry, CertificateTransparencyAnomaly, CertificateRiskAssessment, EmailAnalysis, EmailHeader, EmailAuthenticationResult, EmailHeaderAnomaly, EmailRawMessage, EmailSmtpContext, EmailVerificationRun, MessageAnalysisRecord, MessageIndicatorResult, MessageDomainSpoofingFinding, EmailProviderRegistry, ContactRiskAssessment
+from backend.app.models.models import Scan, CommunityReport, DomainIntelligence, ProviderVerdict, ThreatIndicator, RedirectHop, BrandRegistry, BrandVerificationEvidence, BrandVerificationChallenge, BrandVerificationAudit, BrandLogoAsset, BrandImageReference, WebsiteImageCandidate, ImageComparison, CertificateRecord, CertificateChainLink, CertificateValidationResult, CertificateRevocationResult, CertificateRevocationJob, CertificateTransparencyEntry, CertificateTransparencyAnomaly, CertificateRiskAssessment, EmailAnalysis, EmailHeader, EmailAuthenticationResult, EmailHeaderAnomaly, EmailRawMessage, EmailSmtpContext, EmailVerificationRun, MessageAnalysisRecord, MessageIndicatorResult, MessageDomainSpoofingFinding, EmailProviderRegistry, ContactRiskAssessment, IntelligenceVerification, BackgroundTaskRun
 from backend.app.schemas.schemas import ScanRequest, ReportRequest
 from backend.app.services.scanner import scan
 from backend.app.services.scanner import _destination_providers
@@ -25,6 +26,10 @@ from backend.app.engines.commitments import commitment
 from backend.app.engines.ml import status as ml_status
 from backend.app.services.llm import configuration_status, verify_connection as verify_llm_connection
 from backend.app.core.config import settings
+from backend.app.engines.contact_intelligence import phone_analysis
+from backend.app.engines.email_authentication_verification import verify as verify_email_authentication
+from backend.app.services.cache import health as cache_health
+from backend.app.db.session import engine
 from backend.app.engines.google_safe_browsing import configuration_status as google_safe_browsing_configuration, verify_connection as verify_google_safe_browsing
 from backend.app.engines.virustotal import configuration_status as virustotal_configuration, lookup_url as lookup_virustotal_url, submit_url as submit_virustotal_url, poll_analysis as poll_virustotal_analysis
 from backend.app.engines.external_intelligence import status as external_intelligence_status, urlhaus_status as urlhaus_connectivity_status
@@ -62,7 +67,44 @@ def admin_only(x_admin_token: str | None = Header(default=None)):
     if x_admin_token != settings.admin_api_token: raise HTTPException(403, "Administrator token required")
 
 @router.get("/health")
-def health(): return {"status": "ok", "service": "digital-trust-intelligence"}
+def health():
+    database = "ok"
+    try:
+        with engine.connect() as connection: connection.execute(__import__("sqlalchemy").text("SELECT 1"))
+    except Exception: database = "unavailable"
+    return {"status": "ok" if database == "ok" else "degraded", "service": "digital-trust-intelligence", "database": database, "cache": cache_health()}
+
+@router.get("/intelligence/providers/health")
+def intelligence_provider_health():
+    return {"phone_reputation": {"status": "CONFIGURED" if settings.phone_reputation_api_url.strip() and settings.phone_reputation_api_key.strip() else "NOT_CONFIGURED", "provider": settings.phone_reputation_provider}, "cache": cache_health(), "database": {"status": "CONNECTED" if health()["database"] == "ok" else "UNAVAILABLE"}, "workers": {"status": "CONFIGURED" if settings.celery_broker_url else "NOT_CONFIGURED"}}
+
+@router.post("/intelligence/phone/analyze")
+def intelligence_phone(payload: dict, db: Session = Depends(get_db)):
+    value = payload.get("phone")
+    if not isinstance(value, str) or not value.strip(): raise HTTPException(400, "phone is required")
+    result = phone_analysis(value.strip())
+    db.add(IntelligenceVerification(indicator_type="phone", indicator=value.strip(), provider=result.get("reputation", {}).get("provider", "libphonenumber"), status=result.get("status", "UNKNOWN"), result_json=json.dumps(result), checked_at=datetime.now(timezone.utc)))
+    db.commit()
+    return result
+
+@router.post("/intelligence/email/authentication")
+def intelligence_email_authentication(payload: dict, db: Session = Depends(get_db)):
+    email = payload.get("email")
+    domain = payload.get("domain")
+    if isinstance(email, str) and "@" in email: domain = email.rsplit("@", 1)[1]
+    if not isinstance(domain, str) or not re.match(r"^(?=.{1,253}$)[A-Za-z0-9.-]+$", domain): raise HTTPException(400, "email or domain is required")
+    raw = payload.get("raw_message")
+    raw_bytes = raw.encode() if isinstance(raw, str) and raw else None
+    result = verify_email_authentication(domain, payload.get("selector"), raw_bytes)
+    db.add(IntelligenceVerification(indicator_type="email", indicator=domain.lower().rstrip("."), provider="DNS/email-authentication", status="COMPLETED", result_json=json.dumps(result), checked_at=datetime.now(timezone.utc)))
+    db.commit()
+    return result
+
+@router.get("/intelligence/tasks/{task_id}")
+def intelligence_task(task_id: str, db: Session = Depends(get_db)):
+    row = db.query(BackgroundTaskRun).filter(BackgroundTaskRun.task_id == task_id).first()
+    if not row: raise HTTPException(404, "Task not found")
+    return {"task_id": row.task_id, "task_name": row.task_name, "status": row.status, "result": json.loads(row.result_json) if row.result_json else None, "error": row.error, "started_at": row.started_at, "completed_at": row.completed_at}
 
 @router.get("/brands")
 def brands(db: Session = Depends(get_db)):

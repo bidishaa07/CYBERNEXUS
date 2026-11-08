@@ -16,3 +16,6 @@ pytest==8.3.4
 dkimpy==1.1.8
 pyspf==2.0.14
 phonenumbers==8.13.55
+redis==5.2.1
+celery==5.4.0
+psycopg[binary]==3.2.3

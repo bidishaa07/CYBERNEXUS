@@ -9,6 +9,7 @@ import dns.resolver
 from backend.app.core.config import settings
 from backend.app.engines.domain_intelligence import analyze_domain, registered_domain
 from backend.app.engines.threats import check as check_url
+from backend.app.services import cache
 try:
     import phonenumbers
     from phonenumbers import carrier, geocoder
@@ -29,7 +30,11 @@ def validate_phone(value):
 def phone_reputation(number):
     if not settings.phone_reputation_api_url.strip(): return {"provider":"Phone abuse reputation","status":"NOT_CONFIGURED","verdict":"unknown","classification":"UNKNOWN","reason":"Phone abuse reputation provider not configured.","checked_at":_now()}
     key=(number,settings.phone_reputation_api_url)
-    if key in _cache and _cache[key]["expires"]>datetime.now(timezone.utc).timestamp(): return {**_cache[key]["result"],"cached":True}
+    try:
+        cached = cache.get("phone:" + settings.phone_reputation_api_url + ":" + number)
+        if cached: return {**cached, "cached": True}
+    except RuntimeError as exc:
+        return {"provider": settings.phone_reputation_provider, "status": "UNAVAILABLE", "verdict": "unknown", "reason": "Distributed cache is required in production.", "error": type(exc).__name__, "checked_at": _now()}
     headers={"Accept":"application/json"}; token=settings.phone_reputation_api_key.strip()
     if token: headers[settings.phone_reputation_auth_header]=f"Bearer {token}" if settings.phone_reputation_auth_header.lower()=="authorization" else token
     response = None
@@ -51,7 +56,10 @@ def phone_reputation(number):
         if response.status_code>=500: return {"provider":"Phone abuse reputation","status":"UNAVAILABLE","verdict":"unknown","reason":"Provider server error","checked_at":_now()}
         if not 200<=response.status_code<300: return {"provider":"Phone abuse reputation","status":"PROVIDER_ERROR","verdict":"unknown","reason":f"HTTP {response.status_code}","checked_at":_now()}
         payload=response.json(); verdict=str(payload.get("verdict") or payload.get("reputation") or "unknown").lower(); verdict="malicious" if verdict in {"fraud","scam","malicious"} else "suspicious" if verdict in {"spam","suspicious","high_risk"} else "clean" if verdict in {"clean","safe","low_risk"} else "unknown"
-        result={"provider":"Phone abuse reputation","status":"COMPLETED","verdict":verdict,"confidence":payload.get("confidence"),"abuse_reports":payload.get("abuse_reports"),"evidence":payload,"checked_at":_now()}; _cache[key]={"result":result,"expires":datetime.now(timezone.utc).timestamp()+settings.phone_reputation_cache_ttl_seconds}; return result
+        result={"provider":settings.phone_reputation_provider,"status":"COMPLETED","verdict":verdict,"confidence":payload.get("confidence"),"abuse_reports":payload.get("abuse_reports"),"evidence":payload,"checked_at":_now()}
+        try: cache.set("phone:" + settings.phone_reputation_api_url + ":" + number, result, settings.phone_reputation_cache_ttl_seconds)
+        except RuntimeError as exc: result.update(status="UNAVAILABLE", verdict="unknown", reason="Distributed cache is required in production.", error=type(exc).__name__)
+        return result
     except (ValueError, TypeError) as exc: return {"provider":"Phone abuse reputation","status":"PROVIDER_ERROR","verdict":"unknown","reason":"Provider returned an invalid response.","error":type(exc).__name__,"checked_at":_now()}
 
 def phone_analysis(value):
