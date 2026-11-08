@@ -29,6 +29,7 @@ class Settings(BaseSettings):
     ml_training_max_rows: int = 100000
     ml_min_f1: float = 0.0
     ml_max_false_negative_rate: float = 1.0
+    ml_max_f1_regression: float = 0.01
     google_safe_browsing_api_key: str = ""
     google_cloud_project_id: str = ""
     virustotal_api_key: str = ""

@@ -42,6 +42,7 @@ from backend.app.engines.ca_reputation import configuration_status as ca_reputat
 from backend.app.services.message_reports import bundle as build_message_report, csv_bytes as report_csv_bytes, pdf_bytes as report_pdf_bytes
 from backend.app.services.ml_registry import validate_dataset, artifact_metadata, _safe_artifact, POINTER, MODEL_ROOT
 from backend.app.workers import tasks as worker_tasks
+from backend.app.services.local_ml_worker import submit as submit_local_retraining
 from cryptography import x509
 
 router = APIRouter()
@@ -768,7 +769,7 @@ def start_ml_retraining(payload: dict, background_tasks: BackgroundTasks, princi
     if active: raise HTTPException(409,"A retraining job is already active")
     actor=principal.external_subject or principal.user_id; run=MLTrainingRun(dataset_version_id=dataset.id,status="PENDING",created_by=actor); db.add(run); db.flush(); task_id="ml-retrain-"+secrets.token_hex(12); db.add(BackgroundTaskRun(task_id=task_id,task_name="retrain_model",status="PENDING")); db.commit(); db.refresh(run)
     if worker_tasks.celery_app: worker_tasks.retrain_model.delay(task_id,run.id)
-    else: background_tasks.add_task(worker_tasks.retrain_model,task_id,run.id)
+    else: submit_local_retraining(task_id,run.id)
     return {"task_id":task_id,"training_run_id":run.id,"status":"PENDING","dataset_version_id":dataset.id}
 
 @router.get("/ml/training/{training_run_id}")

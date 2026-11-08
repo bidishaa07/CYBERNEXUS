@@ -251,8 +251,10 @@ Phase 6 preserves the existing TF-IDF + Logistic Regression classifier while add
 - Candidate artifacts are evaluated against the active production artifact on the same test split, including false-positive/false-negative rates, ROC-AUC, PR-AUC and calibration Brier score. Failed thresholds create REJECTED/EVALUATION_FAILED results.
 - Candidates are never auto-approved or auto-deployed. Existing model approval, checksum verification, deployment and rollback endpoints remain the only promotion path.
 - Optional Celery Beat scheduling is configured with ML_RETRAINING_SCHEDULE and ML_RETRAINING_DATASET_ID. Without a broker, development uses the existing FastAPI background-task path.
+- When Celery/Redis is not configured, the API uses a persisted single-process worker fallback that resumes pending/running retraining records on API startup. Redis/Celery remains recommended for multi-worker production capacity.
 - The ML management panel shows training runs and permits an administrator to start retraining from approved datasets.
 - Verification: controlled retraining and registry tests pass; full backend suite is 133 passed, 1 skipped; frontend typecheck, component tests and production build pass. Browser E2E remains a separate command requiring a running browser fixture.
+- Live local verification: cleaned approved dataset merged-managed-dataset-v1 (98,778 records) produced and deployed model retrain-3-20261108070111. The active API reports both model and dataset versions, with health status OK. Browser Chromium E2E passed 1 test.
 
 ## Structure
 

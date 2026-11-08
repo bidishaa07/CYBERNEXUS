@@ -19,6 +19,7 @@ frontend/dist/
 dataset/**/*.csv
 models/*.joblib
 models/candidates/*.joblib
+models/production_pointer.json
 frontend/test-results/
 frontend/playwright-*.png
 *.tsbuildinfo

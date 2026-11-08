@@ -371,4 +371,8 @@ This checklist records repository implementation and observed runtime state. A c
 - [x] Candidates remain unapproved and undeployed until the existing administrator approval/deployment flow is used.
 - [x] Added training-run display and start action to the ML Model Management panel.
 - [x] Verification: controlled retraining tests pass; full backend suite is 133 passed, 1 skipped; frontend typecheck, component tests and production build pass.
-- [ ] Production retraining still requires a configured Celery/Redis worker for durable asynchronous execution; development fallback uses FastAPI background tasks.
+- [x] Created and approved the cleaned reproducible dataset snapshot merged-managed-dataset-v1 (98,778 records; checksum stored) after the raw dataset failed quality validation.
+- [x] Trained, evaluated, approved and deployed retrain-3-20261108070111; live /api/ml/status reports the model and dataset versions.
+- [x] Restarted backend at http://127.0.0.1:8001 and frontend at http://127.0.0.1:5173; health endpoint is OK and Chromium browser E2E passed 1 test.
+- [x] Added a persisted single-process local worker fallback that resumes pending/running retraining records after API restart when Celery/Redis is unavailable.
+- [ ] Redis/Celery is still required for scalable multi-worker production execution; no Redis service is available on this host.

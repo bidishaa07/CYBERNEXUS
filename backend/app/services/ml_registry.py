@@ -18,7 +18,9 @@ def _safe_dataset(path: str) -> Path:
     return candidate
 
 def _safe_artifact(path: str) -> Path:
-    candidate = (MODEL_ROOT / path).resolve() if not Path(path).is_absolute() else Path(path).resolve()
+    relative = Path(path)
+    base = ROOT if relative.parts and relative.parts[0].lower() == "models" else MODEL_ROOT
+    candidate = (base / relative).resolve() if not relative.is_absolute() else relative.resolve()
     if MODEL_ROOT not in candidate.parents or not candidate.is_file(): raise ValueError("artifact must be an existing file inside the models directory")
     return candidate
 
@@ -30,6 +32,7 @@ def sha256_file(path: Path) -> str:
 
 def validate_dataset(path: str, max_rows: int = 500000) -> dict[str, Any]:
     file_path = _safe_dataset(path); checksum = sha256_file(file_path); rows=0; empty=0; malformed=0; duplicates=0; inconsistent=0; labels=Counter(); seen={}
+    csv.field_size_limit(50 * 1024 * 1024)
     with file_path.open("r", encoding="utf-8-sig", errors="replace", newline="") as stream:
         reader = csv.DictReader(stream)
         if not reader.fieldnames or "label" not in reader.fieldnames: raise ValueError("dataset_requires_label_column")

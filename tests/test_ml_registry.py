@@ -1,6 +1,7 @@
 from pathlib import Path
 import json
 import uuid
+import time
 
 from fastapi.testclient import TestClient
 
@@ -40,6 +41,10 @@ def test_manual_retraining_creates_unapproved_candidate_without_replacing_produc
     db=SessionLocal(); dataset=MLDatasetVersion(dataset_id="phase7-fixture-"+uuid.uuid4().hex[:8],version="v1",source="fixture.csv",checksum=quality["checksum"],record_count=quality["record_count"],class_distribution_json="{}",quality_json=json.dumps(quality["quality"]),preprocessing_version="fixture-v1",validation_status="VALID",approval_status="APPROVED",created_by="test"); db.add(dataset); db.commit(); db.refresh(dataset); dataset_id=dataset.id; db.close()
     client=TestClient(app); response=client.post("/api/ml/retraining",json={"dataset_version_id":dataset_id},headers={"X-Admin-Token":settings.admin_api_token})
     assert response.status_code == 200
-    status=client.get("/api/ml/training/"+str(response.json()["training_run_id"]),headers={"X-Admin-Token":settings.admin_api_token})
-    assert status.status_code == 200
+    status=None
+    for _ in range(40):
+        status=client.get("/api/ml/training/"+str(response.json()["training_run_id"]),headers={"X-Admin-Token":settings.admin_api_token})
+        if status.json().get("status") not in {"PENDING","RUNNING"}: break
+        time.sleep(.25)
+    assert status is not None and status.status_code == 200
     assert status.json()["status"] in {"COMPLETED","EVALUATION_FAILED"}
