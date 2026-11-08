@@ -149,7 +149,7 @@ def pdf_bytes(report):
     title = ParagraphStyle("ReportTitle", parent=styles["Title"], alignment=TA_CENTER, spaceAfter=14)
     small = ParagraphStyle("Small", parent=styles["BodyText"], fontSize=8, leading=10)
     heading = ParagraphStyle("Heading", parent=styles["Heading2"], spaceBefore=10, spaceAfter=6)
-    story = [_p("Digital Trust Intelligence — Website Security Assessment Report", title), _p(f"Report version {report['report_version']} · Generated {report['report_generated_at']}", small)]
+    story = [_p("CYBERNEXUS Trust Intelligence — Website Security Assessment Report", title), _p(f"Report version {report['report_version']} · Generated {report['report_generated_at']}", small)]
     summary = report["executive_summary"]
     story += [_p("Executive summary", heading)]
     summary_rows = [[_p("Field", small), _p("Value", small)]] + [[_p(key.replace("_", " ").title(), small), _p(value, small)] for key, value in summary.items() if key != "severity_distribution"]

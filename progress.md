@@ -1,4 +1,4 @@
-# Digital Trust Intelligence Progress
+# CYBERNEXUS Trust Intelligence Progress
 
 Last verified: 2026-11-08
 

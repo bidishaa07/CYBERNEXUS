@@ -22,8 +22,8 @@ def csv_bytes(report: dict) -> bytes:
 
 def pdf_bytes(report: dict) -> bytes:
     output=io.BytesIO(); document=canvas.Canvas(output,pagesize=letter); width,height=letter; y=height-45
-    document.setTitle(f"Digital Trust Message Analysis {report['analysis_id']}")
-    document.setFont("Helvetica-Bold", 15); document.drawString(42,y,"Digital Trust Intelligence - Message Report"); y-=24
+    document.setTitle(f"CYBERNEXUS Message Analysis {report['analysis_id']}")
+    document.setFont("Helvetica-Bold", 15); document.drawString(42,y,"CYBERNEXUS Trust Intelligence - Message Report"); y-=24
     document.setFont("Helvetica",9)
     for key,value in [("Report version",report["report_version"]),("Analysis ID",report["analysis_id"]),("Analysis type",report["analysis_type"]),("Classification",report["automated_assessment"].get("classification")),("Risk score",report["automated_assessment"].get("risk_score")),("Model version",report["metadata"].get("model_version")),("LLM status",report["metadata"].get("llm_status"))]:
         document.drawString(42,y,f"{key}: {value}"); y-=14

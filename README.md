@@ -1,6 +1,6 @@
-# Digital Trust Intelligence
+# CYBERNEXUS Trust Intelligence
 
-Digital Trust Intelligence is a Vite/React and FastAPI application for passive, explainable website and message risk analysis. It combines URL heuristics, domain intelligence, DNS/HTTP/TLS checks, certificate transparency, external reputation providers, community intelligence, ML-assisted message analysis, and configurable LLM explanations.
+CYBERNEXUS Trust Intelligence is a Vite/React and FastAPI application for passive, explainable website and message risk analysis. It combines URL heuristics, domain intelligence, DNS/HTTP/TLS checks, certificate transparency, external reputation providers, community intelligence, ML-assisted message analysis, and configurable LLM explanations.
 
 ## Run locally
 

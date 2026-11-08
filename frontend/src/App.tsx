@@ -64,9 +64,9 @@ export default function App() {
               <ShieldCheck size={20} />
             </div>
             <div>
-              <div className="text-sm font-bold">DIGITAL TRUST</div>
+              <div className="text-sm font-bold">CYBERNEXUS</div>
               <div className="text-[10px] tracking-[.3em] text-cyan">
-                INTELLIGENCE
+                TRUST INTELLIGENCE
               </div>
             </div>
           </div>
