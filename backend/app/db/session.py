@@ -1,5 +1,5 @@
 from sqlalchemy import create_engine, text
-from sqlalchemy.exc import OperationalError
+from sqlalchemy.exc import SQLAlchemyError
 from pathlib import Path
 from sqlalchemy.orm import declarative_base, sessionmaker
 from backend.app.core.config import settings
@@ -41,10 +41,11 @@ def run_migrations():
                     continue
                 try:
                     connection.execute(text(statement))
-                except OperationalError as exc:
+                except SQLAlchemyError as exc:
                     # Migrations are intentionally idempotent because the
-                    # application runs them at startup. SQLite has no
-                    # ADD COLUMN IF NOT EXISTS syntax.
+                    # application runs them at startup. SQLite and older
+                    # PostgreSQL migrations do not share ADD COLUMN IF NOT
+                    # EXISTS syntax, so ignore only duplicate-object errors.
                     message = str(exc).lower()
                     if "duplicate column" not in message and "already exists" not in message:
                         raise
