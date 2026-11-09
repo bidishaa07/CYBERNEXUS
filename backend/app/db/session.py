@@ -40,7 +40,10 @@ def run_migrations():
                 if not statement.strip():
                     continue
                 try:
-                    connection.execute(text(statement))
+                    # Use a savepoint so an expected duplicate-object error
+                    # does not poison PostgreSQL's surrounding transaction.
+                    with connection.begin_nested():
+                        connection.execute(text(statement))
                 except SQLAlchemyError as exc:
                     # Migrations are intentionally idempotent because the
                     # application runs them at startup. SQLite and older
