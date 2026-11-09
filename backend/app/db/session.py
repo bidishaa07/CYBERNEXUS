@@ -4,7 +4,16 @@ from pathlib import Path
 from sqlalchemy.orm import declarative_base, sessionmaker
 from backend.app.core.config import settings
 
-is_sqlite = settings.database_url.startswith("sqlite")
+database_url = settings.database_url
+# Neon commonly provides a generic PostgreSQL URL. This project uses the
+# psycopg (v3) driver, so make the driver explicit instead of letting
+# SQLAlchemy select the legacy psycopg2 dialect.
+if database_url.startswith("postgres://"):
+    database_url = "postgresql+psycopg://" + database_url[len("postgres://"):]
+elif database_url.startswith("postgresql://"):
+    database_url = "postgresql+psycopg://" + database_url[len("postgresql://"):]
+
+is_sqlite = database_url.startswith("sqlite")
 connect_args = {"check_same_thread": False} if is_sqlite else {"connect_timeout": settings.database_connect_timeout_seconds}
 pool_args = {} if is_sqlite else {
     "pool_size": settings.database_pool_size,
@@ -12,7 +21,7 @@ pool_args = {} if is_sqlite else {
     "pool_timeout": settings.database_pool_timeout_seconds,
     "pool_pre_ping": True,
 }
-engine = create_engine(settings.database_url, connect_args=connect_args, **pool_args)
+engine = create_engine(database_url, connect_args=connect_args, **pool_args)
 SessionLocal = sessionmaker(bind=engine, autocommit=False, autoflush=False)
 Base = declarative_base()
 
