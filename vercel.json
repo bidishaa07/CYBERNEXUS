@@ -3,7 +3,8 @@
   "services": {
     "backend": {
       "root": "backend",
-      "framework": "fastapi"
+      "framework": "fastapi",
+      "entrypoint": "vercel_entrypoint.py"
     },
     "frontend": {
       "root": "frontend",

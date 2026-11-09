@@ -23,3 +23,5 @@ models/production_pointer.json
 frontend/test-results/
 frontend/playwright-*.png
 *.tsbuildinfo
+.vercel
+.env*
