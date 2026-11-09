@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import { api } from '../../lib/api';
 
 type HistoryItem = { analysis_id: number; kind: string; classification?: string; risk_score?: number; created_at?: string };
-const API = import.meta.env.VITE_API_URL || 'http://127.0.0.1:8001/api';
+const API = import.meta.env.VITE_API_URL || '/api';
 
 export default function MessageReportsPanel() {
   const [items, setItems] = useState<HistoryItem[]>([]);
