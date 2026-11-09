@@ -35,24 +35,35 @@ def get_db():
 def run_migrations():
     migration_dir=Path(__file__).resolve().parents[2] / "migrations"
     with engine.begin() as connection:
-        for path in sorted(migration_dir.glob("*.sql")):
-            for statement in path.read_text(encoding="utf-8").split(";"):
-                if not statement.strip():
-                    continue
-                try:
-                    # Use a savepoint so an expected duplicate-object error
-                    # does not poison PostgreSQL's surrounding transaction.
-                    with connection.begin_nested():
-                        connection.execute(text(statement))
-                except SQLAlchemyError as exc:
-                    # Migrations are intentionally idempotent because the
-                    # application runs them at startup. SQLite and older
-                    # PostgreSQL migrations do not share ADD COLUMN IF NOT
-                    # EXISTS syntax, so ignore only duplicate-object errors.
-                    message = str(exc).lower()
-                    if "duplicate column" not in message and "already exists" not in message:
-                        raise
-        _install_ledger_guards(connection)
+        advisory_lock = False
+        if connection.dialect.name == "postgresql":
+            # Vercel can initialize several cold-start instances together.
+            # Serialize migrations so concurrent startup transactions cannot
+            # deadlock while creating or seeding the shared schema.
+            connection.exec_driver_sql("SELECT pg_advisory_lock(781923406)")
+            advisory_lock = True
+        try:
+            for path in sorted(migration_dir.glob("*.sql")):
+                for statement in path.read_text(encoding="utf-8").split(";"):
+                    if not statement.strip():
+                        continue
+                    try:
+                        # Use a savepoint so an expected duplicate-object error
+                        # does not poison PostgreSQL's surrounding transaction.
+                        with connection.begin_nested():
+                            connection.execute(text(statement))
+                    except SQLAlchemyError as exc:
+                        # Migrations are intentionally idempotent because the
+                        # application runs them at startup. SQLite and older
+                        # PostgreSQL migrations do not share ADD COLUMN IF NOT
+                        # EXISTS syntax, so ignore only duplicate-object errors.
+                        message = str(exc).lower()
+                        if "duplicate column" not in message and "already exists" not in message:
+                            raise
+            _install_ledger_guards(connection)
+        finally:
+            if advisory_lock:
+                connection.exec_driver_sql("SELECT pg_advisory_unlock(781923406)")
 
 def _install_ledger_guards(connection):
     """Install database-side append-only guards after migrations.
